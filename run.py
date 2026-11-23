@@ -117,6 +117,12 @@ def main() -> int:
     parser.add_argument("--backend-port", type=int, default=8000)
     parser.add_argument("--frontend-port", type=int, default=5173)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind address for the backend (use 0.0.0.0 behind a proxy).")
+    parser.add_argument(
+        "--production",
+        action="store_true",
+        help="Build the frontend and serve it from FastAPI on one port (no Vite).",
+    )
     args = parser.parse_args()
 
     python = ensure_python()
@@ -131,10 +137,14 @@ def main() -> int:
     frontend: subprocess.Popen[bytes] | None = None
     try:
         with backend_log.open("ab") as backend_out, frontend_log.open("ab") as frontend_out:
+            if args.production:
+                print("Building the frontend for production...", flush=True)
+                run_checked([npm, "run", "build"], cwd=FRONTEND)
+
             backend = subprocess.Popen(
                 [
                     str(python), "-m", "uvicorn", "app.main:app",
-                    "--host", "127.0.0.1", "--port", str(args.backend_port),
+                    "--host", args.host, "--port", str(args.backend_port),
                 ],
                 cwd=BACKEND,
                 stdout=backend_out,
@@ -143,25 +153,28 @@ def main() -> int:
             )
             wait_for(f"http://127.0.0.1:{args.backend_port}/api/health", "FastAPI")
 
-            frontend = subprocess.Popen(
-                [
-                    npm, "run", "dev", "--",
-                    "--host", "127.0.0.1", "--port", str(args.frontend_port),
-                ],
-                cwd=FRONTEND,
-                stdout=frontend_out,
-                stderr=subprocess.STDOUT,
-                env={**os.environ, "DATAFUSION_API": f"http://127.0.0.1:{args.backend_port}"},
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
-            )
-            wait_for(f"http://127.0.0.1:{args.frontend_port}/", "Vite")
+            if not args.production:
+                frontend = subprocess.Popen(
+                    [
+                        npm, "run", "dev", "--",
+                        "--host", "127.0.0.1", "--port", str(args.frontend_port),
+                    ],
+                    cwd=FRONTEND,
+                    stdout=frontend_out,
+                    stderr=subprocess.STDOUT,
+                    env={**os.environ, "DATAFUSION_API": f"http://127.0.0.1:{args.backend_port}"},
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+                )
+                wait_for(f"http://127.0.0.1:{args.frontend_port}/", "Vite")
 
-        url = f"http://127.0.0.1:{args.frontend_port}/"
+        port = args.backend_port if args.production else args.frontend_port
+        url = f"http://{'127.0.0.1' if args.host == '0.0.0.0' else args.host}:{port}/"
         print("\nDataFusion AI is running.")
         print(f"  App:      {url}")
         print(f"  API docs: http://127.0.0.1:{args.backend_port}/docs")
+        print(f"  Mode:     {'production (FastAPI serves the build)' if args.production else 'development (Vite + FastAPI)'}")
         print("  Logs:     backend-server.log / frontend-dev.log")
-        print("  Press Ctrl+C to stop both servers.\n")
+        print("  Press Ctrl+C to stop.\n")
         if not args.no_browser:
             webbrowser.open(url)
 
@@ -171,7 +184,7 @@ def main() -> int:
                 print("Backend stopped unexpectedly:")
                 tail_log(backend_log)
                 return 1
-            if frontend.poll() is not None:
+            if frontend is not None and frontend.poll() is not None:
                 print("Frontend stopped unexpectedly:")
                 tail_log(frontend_log)
                 return 1

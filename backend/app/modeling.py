@@ -268,7 +268,10 @@ def train_models(
         rows.append(row)
         fitted[entry["key"]] = pipeline
 
-    best_row = max(rows, key=lambda r: (r["primary"], r["cv_primary"]))
+    # Select on cross-validated performance, then report the held-out test
+    # score. Picking the winner by its test score and reporting that same score
+    # would be an optimistic, selection-biased estimate.
+    best_row = max(rows, key=lambda r: (r["cv_primary"], r["primary"]))
     best_pipeline = fitted[best_row["key"]]
     best_predictions = best_pipeline.predict(X_test)
 
@@ -306,9 +309,9 @@ def train_models(
     importance = _extract_importance(best_pipeline, X_test, y_test, task)
     metric_label = "weighted F1" if task == "classification" else "R²"
     reason = (
-        f"Highest {metric_label} on the held-out test set ({best_row['primary']:.3f})"
-        f" with the strongest {n_splits}-fold CV mean ({best_row['cv_primary']:.3f} ± "
-        f"{best_row.get('cv_f1_std', best_row.get('cv_r2_std', 0)):.3f})."
+        f"Highest {n_splits}-fold CV {metric_label} mean ({best_row['cv_primary']:.3f} ± "
+        f"{best_row.get('cv_f1_std', best_row.get('cv_r2_std', 0)):.3f}); "
+        f"held-out test {metric_label} is {best_row['primary']:.3f}."
     )
 
     evaluation = {

@@ -2,7 +2,9 @@
 
 A complete, runnable data-mining workspace for a **Data Mining & Wrangling** course. Upload two or more related datasets and the app cleans, reconciles and fuses them, explores the result, trains four models, scores new records and exports a real report.
 
-Every number, chart and metric is computed from the files you upload. There is no demo fallback, no seeded placeholder table and no external API — ingestion, fuzzy matching, EDA, modelling and PDF/XLSX generation all run locally. Random state is fixed at `42`, so the same inputs produce identical metrics on every run.
+Every number, chart and metric is computed from the files you upload. There is no demo fallback and no seeded placeholder table — ingestion, fuzzy matching, EDA, modelling and PDF/XLSX generation all run locally. Random state is fixed at `42`, so the same inputs produce identical metrics on every run.
+
+An optional **AI Insights** tab sends only aggregate statistics (never raw rows) to Groq, Google Gemini or OpenRouter. It explains computed results and never computes or changes them; without API keys everything else keeps working.
 
 The interface follows the supplied Dribbble reference **“SDN.io — FUSION”** in both light and dark mode: warm off-white paper, near-black and galaxy surfaces, terracotta accents, glass cards, pill actions, a live 3D fusion core and a sticky navigation bar.
 
@@ -16,8 +18,9 @@ The interface follows the supplied Dribbble reference **“SDN.io — FUSION”*
 4. **Analyse** — dataset overview, per-column statistical summary with IQR whiskers, target suggestion, and rule-based key insights. Numeric and categorical features are profiled on the fused data only.
 5. **View Charts** — correlation heatmap, target class distribution, feature importance, actual vs predicted, confusion matrix (classification) or residuals, plus numeric distributions and boxplots. Every figure is PNG-downloadable.
 6. **Train Models** — Random Forest, Decision Tree, Logistic Regression and SVM (RBF) with a fixed train/test split and k-fold cross-validation. Task type is inferred from the target and can be overridden. The best model is selected on held-out weighted F1 (classification) or R² (regression), persisted on disk and explained with a plain-language reason.
-7. **Predict** — score one record from schema-aware inputs (numeric medians and categorical modes pre-filled) or upload a CSV for batch predictions. Results include class probabilities where the estimator supports them, and are downloadable.
-8. **Reports** — generate a multi-page PDF (title, sources, wrangling log, fusion plan, EDA, insights, embedded charts, model comparison, best model, limitations), the fused CSV and a styled Excel workbook. History and reports survive refreshes and server restarts.
+7. **AI Insights** — optional interpretation of the computed statistics, correlations and model metrics. Providers are tried in a configured order, each attempt is logged with tokens and failures, and a fallback is reported in the UI. The response is explicitly labelled as interpretation.
+8. **Predict** — score one record from schema-aware inputs (numeric medians and categorical modes pre-filled) or upload a CSV for batch predictions. Results include class probabilities where the estimator supports them, and are downloadable.
+9. **Reports** — generate a multi-page PDF (title, sources, wrangling log, fusion plan, EDA, insights, embedded charts, model comparison, best model, limitations), the fused CSV and a styled Excel workbook. History and reports survive refreshes and server restarts.
 
 The workspace sidebar exposes exactly: **Dashboard, Clean Data, Combine Data, Analyse Data, View Charts, Train Models, Predict, Reports**. Before fusion only Dashboard is unlocked; the other sections show lock states instead of dead links. There are no decorative connector lines between steps.
 
@@ -34,6 +37,7 @@ FastAPI
   ├─ cleaning.py    dedupe, safe fills, type/format normalisation, outliers
   ├─ fusion.py      key detection, rapidfuzz matching, conflict rules
   ├─ analysis.py    overview, summary, target suggestion, insights, charts
+  ├─ ai_service.py  Groq → Gemini → OpenRouter fallback, retries, token ledger
   ├─ modeling.py    four estimators, CV, metrics, importance, save/load
   ├─ reporting.py   PDF (ReportLab), XLSX (openpyxl), CSV
   ├─ pipeline.py    seven logged stages with real timings
@@ -87,7 +91,7 @@ Generated sessions, models, charts and reports live under `backend/data/` and ar
 
 - Python **3.10+**
 - Node.js **18+** with npm
-- No database server, cloud account or API key is required.
+- No database server or cloud account is required. AI keys are optional; without them only the AI Insights tab is unavailable.
 
 ---
 
@@ -177,9 +181,13 @@ Every value on screen comes from those uploads. Messy input (mixed date formats,
 | `GET` | `/api/session/{id}/clean` | Wrangling report and cleaned previews |
 | `GET` | `/api/session/{id}/combine` | Join plan, conflicts and fused preview pages |
 | `GET` | `/api/session/{id}/clean/{file_id}/download` | Download a cleaned source |
-| `GET` | `/api/session/{id}/fused` | Fused data pages for the preview table |
 | `GET` | `/api/session/{id}/fused/download` | Download the fused CSV |
 | `GET` | `/api/session/{id}/analyse` | Overview, summaries, target, insights |
+| `GET` | `/api/session/{id}/ai-insights` | Last cached AI interpretation |
+| `POST` | `/api/session/{id}/ai-insights` | Generate an interpretation (optional question) |
+| `GET` | `/api/ai/providers` | Provider order, models and readiness |
+| `GET` | `/api/ai/usage` | Token and success totals per provider |
+| `GET` | `/api/ai/history` | Recent provider attempts, failures and fallbacks |
 | `GET` | `/api/session/{id}/charts` | Chart series and PNG exports |
 | `POST` | `/api/train` | Train and cross-validate four models |
 | `GET` | `/api/session/{id}/model` | Full persisted model bundle |
@@ -195,6 +203,43 @@ Every value on screen comes from those uploads. Messy input (mixed date formats,
 Uploads are capped at 25 MB per file and 200,000 rows. The report and chart endpoints return generated files from the session folder; deleting a session removes them.
 
 ---
+
+## AI providers (optional)
+
+Copy `backend/.env.example` to `backend/.env` and fill at least one complete pair:
+
+```bash
+AI_PROVIDER_ORDER=groq,gemini,openrouter
+GROQ_API_KEY=...        # GROQ_MODEL=openai/gpt-oss-20b
+GEMINI_API_KEY=...      # GEMINI_MODEL=gemini-3.8-flash
+OPENROUTER_API_KEY=...  # OPENROUTER_MODEL=openrouter/free
+```
+
+- Keys are read only by FastAPI. They are never sent to the browser or written to logs.
+- Providers are attempted in `AI_PROVIDER_ORDER`; a failure is logged and the next provider is tried. `AI_MAX_RETRIES` retries only 429/5xx/network errors.
+- Every attempt (success or failure) is appended to `backend/data/ai_usage.json` with provider, model, token counts and fallback state.
+- The prompt contains aggregate statistics, the target, top correlations and model metrics — never rows. Prompt length is bounded without truncating JSON mid-object.
+
+## Production deployment
+
+**Single process (recommended for a demo server or Docker image):**
+
+```bash
+cd frontend && npm ci && npm run build
+cd .. && python run.py --production --host 0.0.0.0 --backend-port 8000
+```
+
+FastAPI serves `frontend/dist` at `/` with SPA fallback, keeps `/api/*` separate, and needs no Vite process. `FRONTEND_DIST` overrides the build location.
+
+**Split frontend/API:** build the frontend with `VITE_API_URL=https://api.example.com` and set `CORS_ORIGINS=https://app.example.com` on the backend. Both are read from the environment; no URL is hard-coded.
+
+Checklist before exposing the app:
+
+- Set `CORS_ORIGINS` to the real origin(s); the development default only allows `localhost`/`127.0.0.1`.
+- Serve behind TLS (reverse proxy) and keep `backend/.env` out of version control (already ignored).
+- `backend/data/` holds every session, model and report on local disk: mount a persistent volume, back it up, and run a single worker/replica. There is no database or object store.
+- **There is no authentication.** Anyone who can reach the API can read, delete and train on every session. Put it behind an authenticating proxy or private network; do not expose it publicly as-is.
+- Health probe: `GET /api/health`. API docs: `/docs`.
 
 ## Design system
 
@@ -220,7 +265,7 @@ Accessibility: semantic landmarks, labelled navigation and form controls, visibl
 ## Determinism and data integrity
 
 - All estimators use `random_state=42`; train/test split is fixed (75/25 by default) and CV uses shuffled folds with the same seed.
-- Best-model selection is metric-driven, not random: weighted F1 for classification, R² for regression; tie-breaks fall back to CV mean.
+- Best-model selection uses the k-fold CV mean (weighted F1 or R²). The held-out test score is reported afterwards, so the winner is not chosen on the same score that is reported.
 - Metrics are computed on the held-out split; CV mean and standard deviation are reported separately.
 - No chart, KPI or report value is hard-coded. UI copy such as stage names and model descriptions is static; every figure is derived from the session.
 - Fusion is logged per source: key chosen, matched/unmatched counts, added columns, conflicts and selected values.
@@ -240,7 +285,17 @@ Accessibility: semantic landmarks, labelled navigation and form controls, visibl
 
 ---
 
-## Verification performed
+## Verification performed (current build)
+
+- `cd frontend && npm run build` — TypeScript check and Vite production build pass.
+- `cd backend && python -m pytest` — 16 tests pass: upload validation, cleaning (including pandas 3 string columns and non-imputed identifiers), key detection and fusion, CV-based model selection, single/batch prediction, PDF/CSV/XLSX generation, AI request/response shapes, retries, fallback and token accounting, and the full HTTP flow.
+- Live providers: Groq and OpenRouter returned real completions; the Gemini `:generateContent` request was accepted (a transient 503 was returned for `gemini-3.8-flash` during the model's demand spike, and the API itself directs clients to that model). A forced Groq failure fell back to OpenRouter with all three attempts recorded in the usage ledger.
+- Single-process production mode checked on a separate port: `/` serves the SPA, a deep client route returns `index.html`, hashed assets load, `/api/health` returns JSON, unknown `/api/*` returns 404, and `CORS_ORIGINS` allows the configured origin while omitting the header for any other origin.
+- Browser: the AI Insights tab rendered the cached interpretation, all three provider states, token totals and attempt history with no console errors.
+
+Not covered: automated cross-browser/accessibility suites, authenticated multi-user deployments, and legacy `.xls` fixtures. Gemini has not yet returned HTTP 200 in this environment because of the provider-side demand spike.
+
+## Verification performed (earlier builds)
 
 - End-to-end HTTP runs with temporary multi-source fixtures used only for testing (not shipped with the project): the largest produced 90 fused rows × 24 columns, 16 conflicts resolved and 5 fuzzy matches, with all 7 stages logged.
 - A second identical run produced byte-for-byte equal metric values, confirming determinism.
@@ -261,5 +316,6 @@ Not covered: automated cross-browser/a11y test suites; `.xls` (legacy binary Exc
 - The PDF uses ReportLab's built-in Helvetica, so arrows and symbols are transliterated to ASCII (`→` becomes `->`, `≈` becomes `~`, `²` becomes `^2`).
 - Charts are returned as data for Recharts, so tooltips and PNG downloads stay interactive; PNG export uses `html2canvas` and was verified end to end.
 - The frontend is a single-page React app with client-side routing. Direct navigation to a workspace URL works with Vite's history fallback; production hosting must also rewrite unknown paths to `index.html`.
-- Sessions are stored on local disk and are not user-authenticated. This is a course/demo build; do not expose it on an untrusted network without adding authentication and access control.
+- Sessions are stored on local disk and are not user-authenticated. Deploy behind an authenticating proxy or private network, and use a persistent volume for `backend/data/`.
+- AI Insights sends aggregate computed statistics to the configured provider; do not enable it for datasets whose column names or statistics are themselves sensitive.
 - The visual direction adapts the supplied **“SDN.io — FUSION”** Dribbble reference. All implementation, copy and data are original.

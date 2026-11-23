@@ -154,7 +154,7 @@ export function FusionProcess() {
               : "Live progress from the backend pipeline."}
           </p>
         </div>
-        <div className="text-right">
+        <div className="text-right" role="status" aria-live="polite" aria-atomic="true">
           <p className="font-display text-[2.6rem] leading-none tracking-[-0.05em] text-ink">{progress}%</p>
           <p className="mt-1 text-[11px] text-muted">
             {status ? `${status.stages.filter((s) => s.status === "done").length} of ${status.stages.length} stages` : "connecting"}

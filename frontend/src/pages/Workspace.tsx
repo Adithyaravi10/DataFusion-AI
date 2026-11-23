@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BarChart3,
+  Bot,
   BrainCircuit,
   ChevronRight,
   FileDown,
@@ -23,6 +24,7 @@ import { fmtInt } from "../lib/format";
 import { useSession } from "../lib/session";
 import type { Session } from "../lib/types";
 import { AnalyseTab } from "./workspace/Analyse";
+import { InsightsTab } from "./workspace/Insights";
 import { ChartsTab } from "./workspace/Charts";
 import { CleanDataTab } from "./workspace/CleanData";
 import { CombineDataTab } from "./workspace/CombineData";
@@ -38,6 +40,7 @@ const tabs = [
   { key: "analyse", label: "Analyse Data", icon: BarChart3, step: "04" },
   { key: "charts", label: "View Charts", icon: LineChart, step: "05" },
   { key: "train", label: "Train Models", icon: BrainCircuit, step: "06" },
+  { key: "ai", label: "AI Insights", icon: Bot, step: "07" },
   { key: "predict", label: "Predict", icon: Wand2, step: "08" },
   { key: "reports", label: "Reports", icon: FileDown, step: "09" },
 ] as const;
@@ -177,6 +180,7 @@ export function Workspace() {
     analyse: <AnalyseTab sessionId={session.id} />,
     charts: <ChartsTab sessionId={session.id} />,
     train: <TrainTab session={session} onRefresh={load} />,
+    ai: <InsightsTab sessionId={session.id} />,
     predict: <PredictTab session={session} onNavigate={go} />,
     reports: <ReportsTab session={session} onRefresh={load} />,
   };

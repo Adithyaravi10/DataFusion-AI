@@ -83,7 +83,7 @@ def _target_chart(frame: pd.DataFrame, target: dict[str, Any] | None, path: Path
     if series.empty:
         return False
     fig, ax = plt.subplots(figsize=(7.2, 3.8))
-    if target.get("task") == "classification" or series.dtype == object:
+    if target.get("task") == "classification" or not pd.api.types.is_numeric_dtype(series):
         counts = series.astype(str).value_counts().head(12)
         ax.bar(counts.index.astype(str), counts.values, color=ACCENT, width=0.6)
         ax.set_ylabel("Rows")

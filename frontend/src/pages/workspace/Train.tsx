@@ -193,9 +193,9 @@ export function TrainTab({
         )}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
-            <Badge tone="accent">{likelyTask}</Badge>
+            <Badge tone="accent">{trained ? task : "task auto"}</Badge>
             <span className="flex items-center gap-1.5">
-              Inferred from the target's values
+              {trained ? "Task used for these models" : "Task is detected from the target's values when training"}
               <InfoTip label="How the task is chosen">
                 A numeric target with more than 10 distinct values is treated as regression; everything else is
                 classification. The same four-model comparison runs either way.

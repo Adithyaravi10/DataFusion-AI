@@ -1,4 +1,8 @@
 import type {
+  AIInsightsResult,
+  AIProviderStatus,
+  AIUsageRecord,
+  AIUsageSummary,
   AnalyseResponse,
   BatchResponse,
   ChartsResponse,
@@ -13,7 +17,11 @@ import type {
   UploadResponse,
 } from "./types";
 
-export const API_BASE: string = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+// Empty by default: requests stay same-origin and use the Vite proxy in dev or
+// the FastAPI static build in production. Set VITE_API_URL when the API lives
+// on another origin, e.g. https://api.example.com.
+const configuredBase = ((import.meta.env.VITE_API_URL as string | undefined) ?? "").trim();
+export const API_BASE: string = configuredBase.replace(/\/+$/, "");
 
 export function apiUrl(path: string): string {
   if (/^https?:\/\//.test(path)) return path;
@@ -202,4 +210,20 @@ export const api = {
     request<Report>("/api/report", jsonBody({ session_id: sessionId })),
 
   reports: () => request<Report[]>("/api/reports"),
+
+  aiInsights: (sessionId: string, question?: string) =>
+    request<AIInsightsResult>(
+      `/api/session/${sessionId}/ai-insights`,
+      jsonBody({ question: question?.trim() ? question.trim() : null }),
+    ),
+
+  cachedAiInsights: (sessionId: string) =>
+    request<{ insights: AIInsightsResult | null }>(`/api/session/${sessionId}/ai-insights`),
+
+  aiProviders: () => request<AIProviderStatus>("/api/ai/providers"),
+
+  aiUsage: () => request<AIUsageSummary>("/api/ai/usage"),
+
+  aiHistory: (limit = 25) =>
+    request<{ records: AIUsageRecord[] }>(`/api/ai/history?limit=${limit}`),
 };

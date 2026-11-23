@@ -21,17 +21,19 @@ type TabKey =
   | "analyse"
   | "charts"
   | "train"
+  | "ai"
   | "predict"
   | "reports";
 
 const pipeline = [
-  { label: "Clean Data", tab: "clean" as TabKey, note: "Before/after stats per source" },
-  { label: "Combine Data", tab: "combine" as TabKey, note: "Joins, matches and conflicts" },
-  { label: "Analyse Data", tab: "analyse" as TabKey, note: "Profile, summary and insights" },
-  { label: "View Charts", tab: "charts" as TabKey, note: "Five required visuals and more" },
-  { label: "Train Models", tab: "train" as TabKey, note: "Four models, test split and CV" },
-  { label: "Predict", tab: "predict" as TabKey, note: "Single record and batch scoring" },
-  { label: "Reports", tab: "reports" as TabKey, note: "PDF, CSV and Excel artefacts" },
+  { step: "02", label: "Clean Data", tab: "clean" as TabKey, note: "Before/after stats per source" },
+  { step: "03", label: "Combine Data", tab: "combine" as TabKey, note: "Joins, matches and conflicts" },
+  { step: "04", label: "Analyse Data", tab: "analyse" as TabKey, note: "Profile, summary and insights" },
+  { step: "05", label: "View Charts", tab: "charts" as TabKey, note: "Five required visuals and more" },
+  { step: "06", label: "Train Models", tab: "train" as TabKey, note: "Four models, test split and CV" },
+  { step: "07", label: "AI Insights", tab: "ai" as TabKey, note: "Explain the computed results" },
+  { step: "08", label: "Predict", tab: "predict" as TabKey, note: "Single record and batch scoring" },
+  { step: "09", label: "Reports", tab: "reports" as TabKey, note: "PDF, CSV and Excel artefacts" },
 ];
 
 export function OverviewTab({
@@ -201,14 +203,14 @@ export function OverviewTab({
       <div className="rounded-card border border-line bg-surface p-5">
         <SectionLabel>Continue the workflow</SectionLabel>
         <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {pipeline.map((step, index) => (
+          {pipeline.map((step) => (
             <button
               key={step.tab}
               type="button"
               onClick={() => onNavigate(step.tab)}
               className="group flex items-center gap-3 rounded-xl border border-line bg-canvas px-3.5 py-3 text-left transition hover:border-accent/50 hover:bg-accent-soft/20"
             >
-              <span className="font-mono text-[9.5px] text-accent">0{index + 1}</span>
+              <span className="font-mono text-[9.5px] text-accent">{step.step}</span>
               <span className="min-w-0 flex-1">
                 <span className="block text-[12px] font-medium text-ink">{step.label}</span>
                 <span className="block truncate text-[10.5px] text-muted">{step.note}</span>

@@ -389,6 +389,59 @@ export interface BatchResponse extends PredictResponse {
   download: string;
 }
 
+export interface AIInsightsResult {
+  response: string;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  fallback_used: boolean;
+  fallback_reason?: string | null;
+  question?: string | null;
+  generated_at: string;
+}
+
+export interface AIProviderInfo {
+  configured: boolean;
+  enabled: boolean;
+  model: string;
+  position: number | null;
+}
+
+export interface AIProviderStatus {
+  order: string[];
+  providers: Record<string, AIProviderInfo>;
+}
+
+export interface AIUsageProviderStats {
+  requests: number;
+  successes: number;
+  failures: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface AIUsageSummary {
+  total_requests: number;
+  successful_requests: number;
+  failed_requests: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  providers: Record<string, AIUsageProviderStats>;
+}
+
+export interface AIUsageRecord {
+  timestamp: string;
+  provider: string;
+  model: string;
+  status: "success" | "failed" | string;
+  input_tokens: number;
+  output_tokens: number;
+  fallback_used: boolean;
+  fallback_reason?: string | null;
+  error?: string | null;
+}
+
 export interface HistoryItem {
   id: string;
   name: string;

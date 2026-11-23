@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+import re
 import shutil
 import threading
 from pathlib import Path
@@ -13,6 +15,7 @@ import pandas as pd
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import ai_service, analysis, ingest, jobs, modeling, reporting
@@ -34,13 +37,30 @@ from .store import (
 ensure_dirs()
 
 app = FastAPI(title="DataFusion AI API", version="1.0.0")
+
+# CORS_ORIGINS is a comma-separated allowlist for deployed frontends, e.g.
+# "https://app.example.com,https://staging.example.com". When it is empty the
+# development origins (localhost/127.0.0.1 on any port) are allowed.
+_cors_origins = [
+    item.strip().rstrip("/") for item in os.getenv("CORS_ORIGINS", "").split(",") if item.strip()
+]
+_allow_all_origins = "*" in _cors_origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_origin_regex=None if _cors_origins else r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_credentials=not _allow_all_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Built SPA (frontend/dist). When present the API also serves the app, so one
+# process can host the whole product behind a reverse proxy.
+FRONTEND_DIST = Path(
+    os.getenv("FRONTEND_DIST", str(Path(__file__).resolve().parents[2] / "frontend" / "dist"))
+).resolve()
+if (FRONTEND_DIST / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="spa-assets")
 
 
 class FuseRequest(BaseModel):
@@ -69,6 +89,8 @@ class PredictRequest(BaseModel):
 
 class ReportRequest(BaseModel):
     session_id: str
+
+
 class AIInsightsRequest(BaseModel):
     question: str | None = Field(
         default=None,
@@ -112,6 +134,16 @@ async def _read_uploads(files: list[UploadFile]) -> tuple[list[tuple[str, bytes,
     errors: list[dict[str, str]] = []
     for upload_file in files:
         filename = upload_file.filename or "unnamed"
+        # Reject oversized parts before pulling the whole body into memory.
+        known_size = getattr(upload_file, "size", None)
+        if isinstance(known_size, int) and known_size > ingest.MAX_BYTES:
+            errors.append(
+                {
+                    "file": filename,
+                    "message": f"'{filename}' is {known_size / (1024 * 1024):.1f} MB — the limit is 25 MB per file.",
+                }
+            )
+            continue
         raw = await upload_file.read()
         try:
             fmt = ingest.validate_upload(filename, len(raw))
@@ -183,15 +215,30 @@ def _store_files(meta: dict[str, Any], validated: list[tuple[str, bytes, str]]) 
     return entries
 
 
+SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{6,32}$")
+
+
+def _valid_id(value: str) -> bool:
+    return bool(SESSION_ID_PATTERN.fullmatch(value or ""))
+
+
 def _clear_derived(meta: dict[str, Any]) -> None:
-    """Drop fused data / model when the source set changes."""
+    """Drop every artefact derived from the old source set."""
     meta["fusion"] = None
     meta["model"] = None
+    meta["clean"] = None
+    meta["insights"] = None
+    meta["ai_insights"] = None
     meta["status"] = "uploaded"
     meta["job_id"] = None
     folder = session_dir(meta["id"])
     (folder / "fused.pkl").unlink(missing_ok=True)
+    (folder / "processed" / "clean_reports.json").unlink(missing_ok=True)
+    for pattern in ("processed/*_clean.csv", "processed/*_clean.pkl"):
+        for path in folder.glob(pattern):
+            path.unlink(missing_ok=True)
     shutil.rmtree(folder / "model", ignore_errors=True)
+    shutil.rmtree(folder / "predictions", ignore_errors=True)
 
 
 def _report_urls(session_id: str, report: dict[str, Any]) -> dict[str, str]:
@@ -252,6 +299,8 @@ def _session_public(meta: dict[str, Any], include_files: bool = True) -> dict[st
 
 
 def _load_session(session_id: str) -> dict[str, Any]:
+    if not _valid_id(session_id):
+        raise HTTPException(status_code=404, detail="Session not found. It may have been deleted.")
     try:
         return load_meta(session_id)
     except FileNotFoundError as exc:
@@ -438,13 +487,8 @@ def remove_file(session_id: str, file_id: str) -> dict[str, Any]:
     path = session_dir(session_id) / file_info["path"]
     path.unlink(missing_ok=True)
     meta["files"] = [f for f in meta["files"] if f["id"] != file_id]
-    meta["fusion"] = None
-    meta["model"] = None
-    meta["status"] = "uploaded"
     meta["name"] = " + ".join(f["name"] for f in meta["files"]) or "Empty session"
-    for stale in ("fused.pkl",):
-        (session_dir(session_id) / stale).unlink(missing_ok=True)
-    shutil.rmtree(session_dir(session_id) / "model", ignore_errors=True)
+    _clear_derived(meta)
     save_meta(meta)
     return {"session": _session_public(meta), "files": [_public_file(f) for f in meta["files"]]}
 
@@ -475,6 +519,8 @@ def start_fusion(payload: FuseRequest) -> dict[str, Any]:
 
 @app.get("/api/fuse/{job_id}/status")
 def job_status(job_id: str) -> dict[str, Any]:
+    if not _valid_id(job_id):
+        raise HTTPException(status_code=404, detail="Fusion job not found.")
     snapshot = jobs.snapshot(job_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Fusion job not found.")
@@ -484,6 +530,8 @@ def job_status(job_id: str) -> dict[str, Any]:
 
 @app.get("/api/fuse/{job_id}/stream")
 async def job_stream(job_id: str) -> StreamingResponse:
+    if not _valid_id(job_id):
+        raise HTTPException(status_code=404, detail="Fusion job not found.")
     if jobs.snapshot(job_id) is None:
         raise HTTPException(status_code=404, detail="Fusion job not found.")
 
@@ -508,6 +556,8 @@ async def job_stream(job_id: str) -> StreamingResponse:
 
 @app.post("/api/fuse/{job_id}/confirm")
 def confirm_keys(job_id: str, payload: ConfirmRequest) -> dict[str, Any]:
+    if not _valid_id(job_id):
+        raise HTTPException(status_code=404, detail="Fusion job not found.")
     if not jobs.is_live(job_id):
         raise HTTPException(status_code=409, detail="This job is no longer running. Start fusion again.")
     job = jobs.get_job(job_id)
@@ -605,34 +655,90 @@ def analyse_data(session_id: str) -> dict[str, Any]:
     meta["insights"] = result["insights"]
     save_meta(meta)
     return analysis.json_safe(result)
+def _ai_context(meta: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    """Aggregate only the results the model is allowed to interpret."""
+    correlation = result.get("correlation") or {}
+    columns = correlation.get("columns") or []
+    matrix = correlation.get("matrix") or []
+    pairs: list[dict[str, Any]] = []
+    for i in range(len(columns)):
+        for j in range(i + 1, len(columns)):
+            try:
+                value = float(matrix[i][j])
+            except (IndexError, TypeError, ValueError):
+                continue
+            if abs(value) >= 0.3:
+                pairs.append({"a": columns[i], "b": columns[j], "r": round(value, 3)})
+    pairs.sort(key=lambda item: abs(item["r"]), reverse=True)
+
+    fusion = meta.get("fusion") or {}
+    model = meta.get("model") or {}
+    evaluation = model.get("evaluation") or {}
+
+    context: dict[str, Any] = {
+        "dataset": result.get("stats") or {},
+        "target": result.get("target"),
+        "fusion": {
+            "rows": fusion.get("final_rows"),
+            "columns": fusion.get("final_columns"),
+            "conflicts_resolved": fusion.get("conflicts_total"),
+            "fuzzy_matches": fusion.get("fuzzy_total"),
+            "sources": fusion.get("source_files"),
+            "single_source": fusion.get("single_source", False),
+        },
+        "column_profiles": (result.get("overview") or [])[:12],
+        "numeric_summary": (result.get("summary") or [])[:8],
+        "correlation_pairs": pairs[:8],
+        "insights": (result.get("insights") or [])[:8],
+    }
+
+    if model:
+        context["model"] = {
+            "task": model.get("task"),
+            "target": model.get("target"),
+            "best_model": model.get("best_model"),
+            "metrics": model.get("best_metrics"),
+            "reason": model.get("reason"),
+            "train_rows": evaluation.get("n_train"),
+            "test_rows": evaluation.get("n_test"),
+            "cv_folds": evaluation.get("cv_folds"),
+            "top_features": (evaluation.get("feature_importance") or model.get("feature_importance") or [])[:8],
+            "confusion_matrix": evaluation.get("confusion_matrix") or model.get("confusion_matrix"),
+        }
+
+    # Keep the prompt well inside every provider's context window without
+    # slicing JSON mid-object.
+    if len(json.dumps(context, default=str)) > 9000:
+        context.pop("column_profiles", None)
+        context.pop("numeric_summary", None)
+    return context
+
+
+@app.get("/api/session/{session_id}/ai-insights")
+def cached_ai_insights(session_id: str) -> dict[str, Any]:
+    meta = _load_session(session_id)
+    return analysis.json_safe({"insights": meta.get("ai_insights")})
+
+
 @app.post("/api/session/{session_id}/ai-insights")
 def generate_ai_insights(
     session_id: str,
     payload: AIInsightsRequest,
 ) -> dict[str, Any]:
-
     meta = _load_session(session_id)
     fused = _load_fused(session_id)
-
     target = _target_info(meta)
 
-    # Use actual computed analysis results.
+    # Recompute from the stored fused dataset; never send raw rows.
     analysis_result = analysis.analyse_frame(fused, target)
-
-    # Send aggregate analysis information, not the raw dataset.
-    context = {
-        "analysis": analysis.json_safe(analysis_result),
-        "model": meta.get("model"),
-    }
+    context = _ai_context(meta, analysis_result)
 
     prompt = (
-        "Analyze the following computed data analysis results.\n"
-        "Explain important patterns, data quality issues, "
-        "correlations, and practical recommendations.\n"
-        "Do not invent statistics or claim that a prediction "
-        "was made unless the supplied results confirm it.\n\n"
-        f"Computed results:\n"
-        f"{json.dumps(context, default=str)[:12000]}"
+        "Interpret the computed results below for the person who ran this fusion. "
+        "Use only the supplied numbers. Explain the most important patterns, "
+        "data-quality caveats and practical next steps in concise prose. "
+        "Never invent statistics, never invent predictions, and do not dump the JSON.\n\n"
+        f"Computed results (JSON):\n{json.dumps(context, default=str)}"
     )
 
     if payload.question:
@@ -647,13 +753,12 @@ def generate_ai_insights(
                 "Never invent statistics."
             ),
         )
-
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=str(exc),
-        ) from exc
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    history = result.get("fallback_history") or []
     meta["ai_insights"] = {
         "response": result["response"],
         "provider": result["provider"],
@@ -661,11 +766,12 @@ def generate_ai_insights(
         "input_tokens": result["input_tokens"],
         "output_tokens": result["output_tokens"],
         "fallback_used": result["fallback_used"],
+        "fallback_reason": history[-1]["error"] if history else None,
+        "question": payload.question,
         "generated_at": now_iso(),
     }
 
     save_meta(meta)
-
     return analysis.json_safe(meta["ai_insights"])
 @app.get("/api/ai/usage")
 def ai_usage_summary() -> dict[str, Any]:
@@ -749,8 +855,10 @@ def predict(payload: PredictRequest) -> dict[str, Any]:
     try:
         bundle = modeling.load_bundle(payload.session_id)
         result = modeling.predict_rows(bundle, [payload.values])
-    except (modeling.ModelingError, Exception) as exc:  # noqa: BLE001
+    except modeling.ModelingError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - prediction inputs are user supplied
+        raise HTTPException(status_code=400, detail=f"Prediction failed: {exc}") from exc
     return analysis.json_safe(result)
 
 
@@ -866,10 +974,33 @@ def download_report(session_id: str, report_id: str, kind: str = Query("pdf", pa
 
 
 @app.get("/")
-def root() -> dict[str, Any]:
+def root() -> Any:
+    index = FRONTEND_DIST / "index.html"
+    if index.exists():
+        return FileResponse(index)
     return {
         "name": "DataFusion AI API",
         "docs": "/docs",
         "data_dir": str(DATA_DIR),
+        "frontend": "not built — run `cd frontend && npm run build` to serve the app from here",
         "endpoints": ["/api/upload", "/api/fuse", "/api/session/{id}/combine", "/api/train", "/api/report"],
     }
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+def spa_fallback(full_path: str) -> FileResponse:
+    """Serve the built SPA for client-side routes; never swallow API paths."""
+    index = FRONTEND_DIST / "index.html"
+    if not index.exists():
+        raise HTTPException(status_code=404, detail="Not found")
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    if full_path:
+        candidate = (FRONTEND_DIST / full_path).resolve()
+        try:
+            candidate.relative_to(FRONTEND_DIST)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Not found") from exc
+        if candidate.is_file():
+            return FileResponse(candidate)
+    return FileResponse(index)

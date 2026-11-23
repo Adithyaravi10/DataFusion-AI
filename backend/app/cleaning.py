@@ -42,6 +42,17 @@ def _key_like(name: str) -> bool:
     return bool(ID_HINT.search(name))
 
 
+def _text_columns(frame: pd.DataFrame) -> list[str]:
+    """Text columns across pandas versions (object in 2.x, str in 3)."""
+    return [
+        col
+        for col in frame.columns
+        if not pd.api.types.is_numeric_dtype(frame[col])
+        and not pd.api.types.is_datetime64_any_dtype(frame[col])
+        and not pd.api.types.is_bool_dtype(frame[col])
+    ]
+
+
 def _numeric_parse(series: pd.Series) -> pd.Series:
     cleaned = (
         series.astype(str)
@@ -92,7 +103,7 @@ def clean_frame(frame: pd.DataFrame, source_name: str) -> tuple[pd.DataFrame, di
 
     # Trim / collapse whitespace in textual columns.
     fixed_cells = 0
-    for col in frame.select_dtypes(include=["object"]).columns:
+    for col in _text_columns(frame):
         original = frame[col]
         textual = original.where(original.isna(), original.astype(str).str.replace(r"\s+", " ", regex=True).str.strip())
         fixed_cells += int((original.fillna("__na__") != textual.fillna("__na__")).sum())
@@ -100,7 +111,7 @@ def clean_frame(frame: pd.DataFrame, source_name: str) -> tuple[pd.DataFrame, di
     report["whitespace_fixed"] = fixed_cells
 
     # Numeric strings such as "$1,299.00" or " 34 ".
-    for col in list(frame.select_dtypes(include=["object"]).columns):
+    for col in _text_columns(frame):
         series = frame[col]
         non_null = series.dropna()
         if len(non_null) < 3:
@@ -122,7 +133,7 @@ def clean_frame(frame: pd.DataFrame, source_name: str) -> tuple[pd.DataFrame, di
                 )
 
     # Dates, including mixed formats in the same column.
-    for col in list(frame.select_dtypes(include=["object"]).columns):
+    for col in _text_columns(frame):
         series = frame[col]
         if series.dropna().empty:
             continue
@@ -145,7 +156,7 @@ def clean_frame(frame: pd.DataFrame, source_name: str) -> tuple[pd.DataFrame, di
             )
 
     # Consistent casing for low-cardinality categories.
-    for col in list(frame.select_dtypes(include=["object"]).columns):
+    for col in _text_columns(frame):
         series = frame[col]
         uniques = series.dropna().astype(str).unique()
         if not (0 < len(uniques) <= 30) or not CATEGORICAL_HINT.search(str(col)):
@@ -171,7 +182,9 @@ def clean_frame(frame: pd.DataFrame, source_name: str) -> tuple[pd.DataFrame, di
         identifier_like = _key_like(str(col)) or bool(
             re.search(r"(email|phone|mobile|name)$", str(col), re.I)
         )
-        if identifier_like and not pd.api.types.is_numeric_dtype(series):
+        # Identifiers are never imputed, even when stored as numbers: a median
+        # key would fabricate rows that later join to the wrong record.
+        if identifier_like:
             report["missing"].append(
                 {
                     "column": str(col),

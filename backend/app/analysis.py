@@ -246,8 +246,11 @@ def _insights(frame: pd.DataFrame, target: dict[str, Any] | None) -> list[dict[s
             )
     high_card = [
         (str(c), int(frame[c].nunique()))
-        for c in frame.select_dtypes(include=["object"]).columns
-        if frame[c].nunique() > 30
+        for c in frame.columns
+        if not pd.api.types.is_numeric_dtype(frame[c])
+        and not pd.api.types.is_datetime64_any_dtype(frame[c])
+        and not pd.api.types.is_bool_dtype(frame[c])
+        and frame[c].nunique() > 30
     ]
     for col, unique in high_card[:1]:
         insights.append(
