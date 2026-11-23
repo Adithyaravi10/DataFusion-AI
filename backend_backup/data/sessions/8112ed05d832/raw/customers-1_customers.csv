@@ -1,0 +1,43 @@
+customer_id,name,email,city,signup_date,age,segment,loyalty_score
+C001,Aarav Mehta,aarav.mehta@example.com,Bengaluru,2023-10-14,29,Premium,69
+C002,Diya Shah,diya.shah@example.com,Mumbai,06/05/2024,58,Standard,28
+C003,Vivaan Patel,vivaan.patel@example.com,delhi,"Apr 17, 2024",41,Basic,80
+C004,Ananya Iyer,ananya.iyer@example.com,Pune,2023/03/17,53,Premium,56
+C005,Rohan Kapoor,rohan.kapoor@example.com,Chennai,2024-06-14,54,PREMIUM,30
+C006,Ishita Nair,ishita.nair@example.com,,06/04/2024,29,Basic,7
+C007,Kabir Bose,kabir.bose@example.com,Kolkata,"Sep 19, 2023",,Premium,8
+C008,Meera Reddy,meera.reddy@example.com,Jaipur,2024/03/01,44,Standard,76
+C009,Arjun Verma,arjun.verma@example.com,bengaluru,2024-03-08,53,Basic,75
+C010,Saanvi Joshi,saanvi.joshi@example.com,Mumbai,19/03/2024,33,standard ,12
+C011,Aditya Rao,aditya.rao@example.com,Delhi,"Sep 29, 2023",58,Standard,999
+C012,Riya Gupta,riya.gupta@example.com,Pune,2023/07/27,27,Basic,64
+C013,Karan Singh,karan.singh@example.com,,2025-01-03,44,Premium,42
+C014,Nisha Desai,nisha.desai@example.com,Hyderabad,14/05/2023,36,Standard,8
+C015,Vihaan Kulkarni,vihaan.kulkarni@example.com,kolkata,"Aug 11, 2023",39,Basic,40
+C016,Tara Menon,tara.menon@example.com,Jaipur,2024/12/26,25,BASIC,35
+C017,Dev Chopra,dev.chopra@example.com,Bengaluru,2024-05-31,32,Standard,83
+C018,Anika Banerjee,anika.banerjee@example.com,Mumbai,16/03/2024,27,Basic,15
+C019,Rahul Malhotra,rahul.malhotra@example.com,Delhi,"Mar 14, 2025",,Premium,88
+C020,Priya Shetty,priya.shetty@example.com,Pune,2023/07/15,30,Standard,76
+C021,  Siddharth Mehta  ,siddharth.mehta@example.com,Chennai,2023-05-26,50,Basic,64
+C022,Kavya Shah,kavya.shah@example.com,Hyderabad,25/02/2025,53,Premium,95
+C023,Manav Patel,manav.patel@example.com,Kolkata,"Jul 27, 2024",37,Standard,-50
+C024,Neha Iyer,neha.iyer@example.com,Jaipur,2025/05/28,41,Basic,30
+C025,Yash Kapoor,yash.kapoor@example.com,Bengaluru,2023-02-27,48,Premium,18
+C026,Pooja Nair,pooja.nair@example.com,Mumbai,02/04/2025,49,Standard,55
+C027,Nikhil Bose,,Delhi,"May 13, 2025",25,Basic,89
+C028,Shreya Reddy,shreya.reddy@example.com,Pune,2025/01/06,27,Premium,51
+C029,Harsh Verma,harsh.verma@example.com,Chennai,2024-02-25,32,Standard,48
+C030,AISHA JOSHI,aisha.joshi@example.com,Hyderabad,09/03/2025,53,Basic,16
+C031,Varun Rao,varun.rao@example.com,Kolkata,"May 20, 2023",37,Premium,20
+C032,Divya Gupta,,Jaipur,2025/04/12,57,Standard,43
+C033,Kunal Singh,kunal.singh@example.com,Bengaluru,2025-05-26,46,Basic,57
+C034,Sneha Desai,sneha.desai@example.com,MUMBAI,23/09/2023,48,Premium,15
+C035,Raghav Kulkarni,raghav.kulkarni@example.com,Delhi,"May 15, 2024",24,Standard,17
+C036,Ira Menon,ira.menon@example.com,Pune,2023/04/18,62,Basic,38
+C037,Sameer Chopra,sameer.chopra@example.com,Chennai,2024-07-01,51,Premium,75
+C038,Trisha Banerjee,trisha.banerjee@example.com,Hyderabad,03/04/2023,35,Standard,46
+C039,Om Malhotra,om.malhotra@example.com,Kolkata,"Feb 16, 2023",36,Basic,19
+C040,Lakshmi Shetty,lakshmi.shetty@example.com,Jaipur,2023/02/18,40,Premium,30
+C005,Rohan Kapoor,rohan.kapoor@example.com,Chennai,2024-06-14,54,PREMIUM,30
+C018,Anika Banerjee,anika.banerjee@example.com,Mumbai,16/03/2024,27,Basic,15

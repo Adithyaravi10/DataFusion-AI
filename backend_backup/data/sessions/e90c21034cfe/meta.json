@@ -1,0 +1,237 @@
+{
+  "id": "e90c21034cfe",
+  "name": "orders.csv + customers.csv + extra.json + flags.csv",
+  "created_at": "2026-11-23T13:47:15.323619+00:00",
+  "updated_at": "2026-11-23T13:48:16.405042+00:00",
+  "status": "uploaded",
+  "files": [
+    {
+      "id": "orders-1",
+      "name": "orders.csv",
+      "path": "raw/orders-1_orders.csv",
+      "source": "orders",
+      "size": 42,
+      "format": "CSV",
+      "rows": 3,
+      "cols": 3,
+      "columns": [
+        "id",
+        "name",
+        "amount"
+      ],
+      "preview": [
+        {
+          "id": 1,
+          "name": "Ana",
+          "amount": 10
+        },
+        {
+          "id": 2,
+          "name": "Ben",
+          "amount": 20
+        },
+        {
+          "id": 3,
+          "name": "Cia",
+          "amount": 30
+        }
+      ],
+      "warnings": [
+        "Fewer than 5 rows: machine learning will be unreliable."
+      ],
+      "sha256": "559f32e9987e68d90bab310c17b339fb34ab8648c9a5a5b93f8505a1e0fabe46"
+    },
+    {
+      "id": "customers-2",
+      "name": "customers.csv",
+      "path": "raw/customers-2_customers.csv",
+      "source": "customers",
+      "size": 29,
+      "format": "CSV",
+      "rows": 3,
+      "cols": 2,
+      "columns": [
+        "id",
+        "city"
+      ],
+      "preview": [
+        {
+          "id": 1,
+          "city": "Oslo"
+        },
+        {
+          "id": 2,
+          "city": "Rome"
+        },
+        {
+          "id": 3,
+          "city": "Lima"
+        }
+      ],
+      "warnings": [
+        "Fewer than 5 rows: machine learning will be unreliable."
+      ],
+      "sha256": "a938af3eafceba7dbb4ffa895c840c4505ed3bd15570b6a20ec7520d7a299b80"
+    },
+    {
+      "id": "extra-3",
+      "name": "extra.json",
+      "path": "raw/extra-3_extra.json",
+      "source": "extra",
+      "size": 59,
+      "format": "JSON",
+      "rows": 3,
+      "cols": 2,
+      "columns": [
+        "id",
+        "score"
+      ],
+      "preview": [
+        {
+          "id": 1,
+          "score": 5
+        },
+        {
+          "id": 2,
+          "score": 7
+        },
+        {
+          "id": 3,
+          "score": 9
+        }
+      ],
+      "warnings": [
+        "Fewer than 5 rows: machine learning will be unreliable."
+      ],
+      "sha256": "8e575d09e815faee7fd08011d7e98bb9a5188df8413379846cc8a96ba927bb7a"
+    },
+    {
+      "id": "flags-4",
+      "name": "flags.csv",
+      "path": "raw/flags-4_flags.csv",
+      "source": "flags",
+      "size": 25,
+      "format": "CSV",
+      "rows": 3,
+      "cols": 2,
+      "columns": [
+        "id",
+        "flag"
+      ],
+      "preview": [
+        {
+          "id": 1,
+          "flag": "yes"
+        },
+        {
+          "id": 2,
+          "flag": "no"
+        },
+        {
+          "id": 3,
+          "flag": "yes"
+        }
+      ],
+      "warnings": [
+        "Fewer than 5 rows: machine learning will be unreliable."
+      ],
+      "sha256": "399c429522253403587d26c741af3b6e549e8e17657ec5ab56d4ca1c45e0487b"
+    }
+  ],
+  "fusion": null,
+  "model": null,
+  "reports": [],
+  "job_id": null,
+  "clean": [
+    {
+      "source": "orders.csv",
+      "before": {
+        "rows": 3,
+        "columns": 3,
+        "missing_cells": 0,
+        "duplicate_rows": 0,
+        "missing_pct": 0.0
+      },
+      "renamed_columns": [],
+      "dropped_all_null": [],
+      "whitespace_fixed": 0,
+      "numeric_converted": [],
+      "dates_parsed": [],
+      "casing_fixed": [],
+      "missing": [],
+      "outliers": [],
+      "constant_columns": [],
+      "duplicates_removed": 0,
+      "notes": [],
+      "after": {
+        "rows": 3,
+        "columns": 3,
+        "missing_cells": 0,
+        "duplicate_rows": 0,
+        "missing_pct": 0.0
+      },
+      "rows_removed": 0,
+      "missing_filled": 0
+    },
+    {
+      "source": "customers.csv",
+      "before": {
+        "rows": 3,
+        "columns": 2,
+        "missing_cells": 0,
+        "duplicate_rows": 0,
+        "missing_pct": 0.0
+      },
+      "renamed_columns": [],
+      "dropped_all_null": [],
+      "whitespace_fixed": 0,
+      "numeric_converted": [],
+      "dates_parsed": [],
+      "casing_fixed": [],
+      "missing": [],
+      "outliers": [],
+      "constant_columns": [],
+      "duplicates_removed": 0,
+      "notes": [],
+      "after": {
+        "rows": 3,
+        "columns": 2,
+        "missing_cells": 0,
+        "duplicate_rows": 0,
+        "missing_pct": 0.0
+      },
+      "rows_removed": 0,
+      "missing_filled": 0
+    },
+    {
+      "source": "extra.json",
+      "before": {
+        "rows": 3,
+        "columns": 2,
+        "missing_cells": 0,
+        "duplicate_rows": 0,
+        "missing_pct": 0.0
+      },
+      "renamed_columns": [],
+      "dropped_all_null": [],
+      "whitespace_fixed": 0,
+      "numeric_converted": [],
+      "dates_parsed": [],
+      "casing_fixed": [],
+      "missing": [],
+      "outliers": [],
+      "constant_columns": [],
+      "duplicates_removed": 0,
+      "notes": [],
+      "after": {
+        "rows": 3,
+        "columns": 2,
+        "missing_cells": 0,
+        "duplicate_rows": 0,
+        "missing_pct": 0.0
+      },
+      "rows_removed": 0,
+      "missing_filled": 0
+    }
+  ]
+}

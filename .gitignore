@@ -1,0 +1,25 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Runtime sessions, jobs, models and reports
+backend/data/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Logs and local review artefacts
+*.log
+.reference/
+_smoke*.py
+_smoke_batch.csv
+screenshot*.png
+# Environment variables and API secrets
+.env
+.env.*
+!.env.example

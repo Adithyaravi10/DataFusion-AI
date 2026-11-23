@@ -1,0 +1,320 @@
+{
+  "id": "6e4421269975",
+  "name": "orders.csv + customers.csv + flags.csv",
+  "created_at": "2026-11-23T13:57:43.906422+00:00",
+  "updated_at": "2026-11-23T14:00:43.219344+00:00",
+  "status": "ready",
+  "files": [
+    {
+      "id": "orders-1",
+      "name": "orders.csv",
+      "path": "raw/orders-1_orders.csv",
+      "source": "orders",
+      "size": 60,
+      "format": "CSV",
+      "rows": 5,
+      "cols": 3,
+      "columns": [
+        "id",
+        "name",
+        "amount"
+      ],
+      "preview": [
+        {
+          "id": 1,
+          "name": "Ana",
+          "amount": 10
+        },
+        {
+          "id": 2,
+          "name": "Ben",
+          "amount": 20
+        },
+        {
+          "id": 3,
+          "name": "Cia",
+          "amount": 30
+        },
+        {
+          "id": 4,
+          "name": "Dan",
+          "amount": 40
+        },
+        {
+          "id": 5,
+          "name": "Eve",
+          "amount": 50
+        }
+      ],
+      "warnings": [],
+      "sha256": "1f3195a6dc0c22d2f8d1ed6f3afda8f4ee15cd05f4546318e99028aa1be20fd7"
+    },
+    {
+      "id": "customers-2",
+      "name": "customers.csv",
+      "path": "raw/customers-2_customers.csv",
+      "source": "customers",
+      "size": 43,
+      "format": "CSV",
+      "rows": 5,
+      "cols": 2,
+      "columns": [
+        "id",
+        "city"
+      ],
+      "preview": [
+        {
+          "id": 1,
+          "city": "Oslo"
+        },
+        {
+          "id": 2,
+          "city": "Rome"
+        },
+        {
+          "id": 3,
+          "city": "Lima"
+        },
+        {
+          "id": 4,
+          "city": "Kyiv"
+        },
+        {
+          "id": 5,
+          "city": "Baku"
+        }
+      ],
+      "warnings": [],
+      "sha256": "f7afd59d2a1b23d7c3415b8e9185746d041ee0d92496c522f279fb707db416c7"
+    },
+    {
+      "id": "flags-3",
+      "name": "flags.csv",
+      "path": "raw/flags-3_flags.csv",
+      "source": "flags",
+      "size": 36,
+      "format": "CSV",
+      "rows": 5,
+      "cols": 2,
+      "columns": [
+        "id",
+        "flag"
+      ],
+      "preview": [
+        {
+          "id": 1,
+          "flag": "yes"
+        },
+        {
+          "id": 2,
+          "flag": "no"
+        },
+        {
+          "id": 3,
+          "flag": "yes"
+        },
+        {
+          "id": 4,
+          "flag": "no"
+        },
+        {
+          "id": 5,
+          "flag": "yes"
+        }
+      ],
+      "warnings": [],
+      "sha256": "dd3ae7a4548af54c4e9bab610eff0e6a30612f8a4280bb134a500e8c0b44ad37"
+    }
+  ],
+  "fusion": {
+    "base_source": "orders",
+    "steps": [
+      {
+        "source": "customers",
+        "left_source": "orders",
+        "left_key": "id",
+        "right_key": "id",
+        "rows_before": 5,
+        "rows_after": 5,
+        "exact_matches": 5,
+        "fuzzy_matches": 0,
+        "fuzzy_examples": [],
+        "unmatched": 0,
+        "match_rate": 100.0,
+        "aggregated_from": null,
+        "aggregated_to": null,
+        "conflicts": [],
+        "columns_added": 1
+      },
+      {
+        "source": "flags",
+        "left_source": "orders",
+        "left_key": "id",
+        "right_key": "id",
+        "rows_before": 5,
+        "rows_after": 5,
+        "exact_matches": 5,
+        "fuzzy_matches": 0,
+        "fuzzy_examples": [],
+        "unmatched": 0,
+        "match_rate": 100.0,
+        "aggregated_from": null,
+        "aggregated_to": null,
+        "conflicts": [],
+        "columns_added": 2
+      }
+    ],
+    "join_keys": [
+      {
+        "source": "customers",
+        "left": "orders.id",
+        "right": "customers.id"
+      },
+      {
+        "source": "flags",
+        "left": "orders.id",
+        "right": "flags.id"
+      }
+    ],
+    "conflicts_total": 0,
+    "fuzzy_total": 0,
+    "duplicates_removed": 0,
+    "final_rows": 5,
+    "final_columns": 5,
+    "sources_used": [
+      "orders",
+      "customers",
+      "flags"
+    ],
+    "remaining_missing": 0,
+    "target_suggestion": {
+      "column": "flag",
+      "task": "classification",
+      "confidence": 0.77,
+      "reason": "Categorical column with 2 classes",
+      "classes": [
+        "yes",
+        "no"
+      ],
+      "missing_pct": 0.0
+    },
+    "completed_at": "2026-11-23T13:59:17.587006+00:00",
+    "source_files": [
+      "orders.csv",
+      "customers.csv",
+      "flags.csv"
+    ]
+  },
+  "model": null,
+  "reports": [],
+  "job_id": "82ed5c3d4d3d",
+  "clean": [
+    {
+      "source": "orders.csv",
+      "before": {
+        "rows": 5,
+        "columns": 3,
+        "missing_cells": 0,
+        "duplicate_rows": 0,
+        "missing_pct": 0.0
+      },
+      "renamed_columns": [],
+      "dropped_all_null": [],
+      "whitespace_fixed": 0,
+      "numeric_converted": [],
+      "dates_parsed": [],
+      "casing_fixed": [],
+      "missing": [],
+      "outliers": [],
+      "constant_columns": [],
+      "duplicates_removed": 0,
+      "notes": [],
+      "after": {
+        "rows": 5,
+        "columns": 3,
+        "missing_cells": 0,
+        "duplicate_rows": 0,
+        "missing_pct": 0.0
+      },
+      "rows_removed": 0,
+      "missing_filled": 0
+    },
+    {
+      "source": "customers.csv",
+      "before": {
+        "rows": 5,
+        "columns": 2,
+        "missing_cells": 0,
+        "duplicate_rows": 0,
+        "missing_pct": 0.0
+      },
+      "renamed_columns": [],
+      "dropped_all_null": [],
+      "whitespace_fixed": 0,
+      "numeric_converted": [],
+      "dates_parsed": [],
+      "casing_fixed": [],
+      "missing": [],
+      "outliers": [],
+      "constant_columns": [],
+      "duplicates_removed": 0,
+      "notes": [],
+      "after": {
+        "rows": 5,
+        "columns": 2,
+        "missing_cells": 0,
+        "duplicate_rows": 0,
+        "missing_pct": 0.0
+      },
+      "rows_removed": 0,
+      "missing_filled": 0
+    },
+    {
+      "source": "flags.csv",
+      "before": {
+        "rows": 5,
+        "columns": 2,
+        "missing_cells": 0,
+        "duplicate_rows": 0,
+        "missing_pct": 0.0
+      },
+      "renamed_columns": [],
+      "dropped_all_null": [],
+      "whitespace_fixed": 0,
+      "numeric_converted": [],
+      "dates_parsed": [],
+      "casing_fixed": [],
+      "missing": [],
+      "outliers": [],
+      "constant_columns": [],
+      "duplicates_removed": 0,
+      "notes": [],
+      "after": {
+        "rows": 5,
+        "columns": 2,
+        "missing_cells": 0,
+        "duplicate_rows": 0,
+        "missing_pct": 0.0
+      },
+      "rows_removed": 0,
+      "missing_filled": 0
+    }
+  ],
+  "insights": [
+    {
+      "kind": "pattern",
+      "title": "id and amount move together",
+      "text": "Strong positively correlation (r = 1.00) between id and amount."
+    },
+    {
+      "kind": "info",
+      "title": "Target distribution: flag",
+      "text": "yes is 60.0% of the labelled rows."
+    },
+    {
+      "kind": "warning",
+      "title": "Small fused dataset",
+      "text": "Only 5 rows are available, so cross-validation folds are adjusted and metrics are optimistic."
+    }
+  ]
+}

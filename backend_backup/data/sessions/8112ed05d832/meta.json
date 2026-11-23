@@ -1,0 +1,86 @@
+{
+  "id": "8112ed05d832",
+  "name": "customers.csv",
+  "created_at": "2026-11-23T13:09:40.331612+00:00",
+  "updated_at": "2026-11-23T13:09:47.923388+00:00",
+  "status": "uploaded",
+  "files": [
+    {
+      "id": "customers-1",
+      "name": "customers.csv",
+      "path": "raw/customers-1_customers.csv",
+      "source": "customers",
+      "size": 3204,
+      "format": "CSV",
+      "rows": 42,
+      "cols": 8,
+      "columns": [
+        "customer_id",
+        "name",
+        "email",
+        "city",
+        "signup_date",
+        "age",
+        "segment",
+        "loyalty_score"
+      ],
+      "preview": [
+        {
+          "customer_id": "C001",
+          "name": "Aarav Mehta",
+          "email": "aarav.mehta@example.com",
+          "city": "Bengaluru",
+          "signup_date": "2023-10-14",
+          "age": 29.0,
+          "segment": "Premium",
+          "loyalty_score": 69
+        },
+        {
+          "customer_id": "C002",
+          "name": "Diya Shah",
+          "email": "diya.shah@example.com",
+          "city": "Mumbai",
+          "signup_date": "06/05/2024",
+          "age": 58.0,
+          "segment": "Standard",
+          "loyalty_score": 28
+        },
+        {
+          "customer_id": "C003",
+          "name": "Vivaan Patel",
+          "email": "vivaan.patel@example.com",
+          "city": "delhi",
+          "signup_date": "Apr 17, 2024",
+          "age": 41.0,
+          "segment": "Basic",
+          "loyalty_score": 80
+        },
+        {
+          "customer_id": "C004",
+          "name": "Ananya Iyer",
+          "email": "ananya.iyer@example.com",
+          "city": "Pune",
+          "signup_date": "2023/03/17",
+          "age": 53.0,
+          "segment": "Premium",
+          "loyalty_score": 56
+        },
+        {
+          "customer_id": "C005",
+          "name": "Rohan Kapoor",
+          "email": "rohan.kapoor@example.com",
+          "city": "Chennai",
+          "signup_date": "2024-06-14",
+          "age": 54.0,
+          "segment": "PREMIUM",
+          "loyalty_score": 30
+        }
+      ],
+      "warnings": []
+    }
+  ],
+  "fusion": null,
+  "model": null,
+  "reports": [],
+  "job_id": null
+}
