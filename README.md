@@ -211,7 +211,7 @@ Copy `backend/.env.example` to `backend/.env` and fill at least one complete pai
 ```bash
 AI_PROVIDER_ORDER=groq,gemini,openrouter
 GROQ_API_KEY=...        # GROQ_MODEL=openai/gpt-oss-20b
-GEMINI_API_KEY=...      # GEMINI_MODEL=gemini-3.8-flash
+GEMINI_API_KEY=...      # GEMINI_MODEL=gemini-3.5-flash-lite
 OPENROUTER_API_KEY=...  # OPENROUTER_MODEL=openrouter/free
 ```
 
@@ -289,7 +289,7 @@ Accessibility: semantic landmarks, labelled navigation and form controls, visibl
 
 - `cd frontend && npm run build` — TypeScript check and Vite production build pass.
 - `cd backend && python -m pytest` — 16 tests pass: upload validation, cleaning (including pandas 3 string columns and non-imputed identifiers), key detection and fusion, CV-based model selection, single/batch prediction, PDF/CSV/XLSX generation, AI request/response shapes, retries, fallback and token accounting, and the full HTTP flow.
-- Live providers: Groq and OpenRouter returned real completions; the Gemini `:generateContent` request was accepted (a transient 503 was returned for `gemini-3.8-flash` during the model's demand spike, and the API itself directs clients to that model). A forced Groq failure fell back to OpenRouter with all three attempts recorded in the usage ledger.
+- Live providers: Groq, OpenRouter and Gemini all returned real completions with token counts. Gemini uses `gemini-3.5-flash-lite` through `:generateContent`; `gemini-3.8-flash` returns HTTP 503 `UNAVAILABLE` ("currently experiencing high demand") from Google's side, which is retried and then fails over. Gemini-only execution, fallback on Gemini failure, invalid-key (400) and unknown-model (404) handling, and the absence of key material in error messages were all verified.
 - Single-process production mode checked on a separate port: `/` serves the SPA, a deep client route returns `index.html`, hashed assets load, `/api/health` returns JSON, unknown `/api/*` returns 404, and `CORS_ORIGINS` allows the configured origin while omitting the header for any other origin.
 - Browser: the AI Insights tab rendered the cached interpretation, all three provider states, token totals and attempt history with no console errors.
 
