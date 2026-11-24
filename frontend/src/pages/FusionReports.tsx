@@ -3,7 +3,7 @@ import { ArrowUpRight, Download, FileSpreadsheet, FileText, RefreshCw, Table2 } 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge, Button, EmptyState, ErrorPanel, PageHeader, Skeleton } from "../components/ui";
-import { api, apiUrl } from "../lib/api";
+import { REPORT_FILENAMES, api, apiUrl } from "../lib/api";
 import { fmtDateTime, fmtInt, fmtNumber } from "../lib/format";
 import type { Report } from "../lib/types";
 
@@ -105,6 +105,12 @@ export function FusionReportsPage() {
                     <a
                       key={kind}
                       href={apiUrl(report.downloads[kind])}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void api
+                          .download(report.downloads[kind], REPORT_FILENAMES[kind])
+                          .catch(() => undefined);
+                      }}
                       className="inline-flex h-9 items-center gap-2 rounded-pill border border-line bg-canvas px-3.5 text-[11.5px] text-ink transition hover:border-accent/60 hover:text-accent"
                     >
                       <Icon size={13} />

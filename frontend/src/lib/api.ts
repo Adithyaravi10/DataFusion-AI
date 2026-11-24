@@ -28,6 +28,51 @@ export function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
 }
 
+// --------------------------------------------------------------- ownership
+// Each browser keeps one unpredictable token and sends it with every request;
+// the API stores only its hash, so sessions and datasets stay private to the
+// browser that created them. The server mirrors it into an HttpOnly cookie.
+const OWNER_STORAGE_KEY = "df-owner";
+const OWNER_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
+let cachedOwner: string | null = null;
+
+function randomOwnerToken(): string {
+  const bytes = new Uint8Array(32);
+  if (typeof crypto !== "undefined" && "getRandomValues" in crypto) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export function ownerToken(): string {
+  if (cachedOwner) return cachedOwner;
+  try {
+    const stored = window.localStorage.getItem(OWNER_STORAGE_KEY);
+    if (stored && OWNER_PATTERN.test(stored)) {
+      cachedOwner = stored;
+      return stored;
+    }
+  } catch {
+    /* storage unavailable */
+  }
+  const created = randomOwnerToken();
+  cachedOwner = created;
+  try {
+    window.localStorage.setItem(OWNER_STORAGE_KEY, created);
+  } catch {
+    /* storage unavailable */
+  }
+  return created;
+}
+
+function ownerHeaders(extra?: HeadersInit): Record<string, string> {
+  return { ...(extra as Record<string, string> | undefined), "X-DF-Owner": ownerToken() };
+}
+
 export interface FieldError {
   file: string;
   message: string;
@@ -75,6 +120,8 @@ function xhrUpload<T>(
     files.forEach((file) => form.append("files", file, file.name));
     const xhr = new XMLHttpRequest();
     xhr.open("POST", apiUrl(path));
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("X-DF-Owner", ownerToken());
     xhr.upload.onprogress = (event) => {
       if (!onProgress || !event.lengthComputable) return;
       onProgress({
@@ -110,7 +157,11 @@ function xhrUpload<T>(
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(apiUrl(path), init);
+    response = await fetch(apiUrl(path), {
+      ...init,
+      credentials: "include",
+      headers: ownerHeaders(init?.headers),
+    });
   } catch {
     throw new ApiError(
       "Cannot reach the DataFusion API. Make sure the FastAPI server is running on port 8000.",
@@ -123,6 +174,96 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw payloadError(response.status, payload);
   }
   return payload as T;
+}
+
+/** The names the backend serves each report artefact with. */
+export const REPORT_FILENAMES: Record<string, string> = {
+  pdf: "DataFusion_Report.pdf",
+  csv: "fused_dataset.csv",
+  xlsx: "fusion_summary.xlsx",
+};
+
+function sanitiseFilename(raw: string): string | null {
+  const cleaned = raw.replace(/[\r\n\t]/g, "").replace(/[\\/]/g, "_").trim();
+  return cleaned || null;
+}
+
+/**
+ * Read the filename a download was served with. Handles the RFC 5987
+ * `filename*=UTF-8''…` form, a quoted `filename="…"`, and a bare value.
+ */
+export function filenameFromContentDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const extended = /filename\*\s*=\s*([^;]+)/i.exec(header);
+  const extendedValue = extended?.[1]?.trim().replace(/^UTF-8''/i, "").replace(/^"|"$/g, "");
+  if (extendedValue) {
+    try {
+      const decoded = sanitiseFilename(decodeURIComponent(extendedValue));
+      if (decoded) return decoded;
+    } catch {
+      /* malformed percent-encoding: fall through to the plain forms */
+    }
+  }
+  const quoted = /filename\s*=\s*"([^"]*)"/i.exec(header);
+  if (quoted?.[1]) {
+    const value = sanitiseFilename(quoted[1]);
+    if (value) return value;
+  }
+  const bare = /filename\s*=\s*([^;]+)/i.exec(header);
+  if (bare?.[1]) {
+    const value = sanitiseFilename(bare[1].replace(/^"|"$/g, ""));
+    if (value) return value;
+  }
+  return null;
+}
+
+/** Last-resort name when no Content-Disposition header reaches the browser. */
+function filenameFromPath(path: string): string {
+  const [bare = "", query = ""] = path.split("?");
+  const segments = bare.split("/").filter(Boolean);
+  const kind = new URLSearchParams(query).get("kind");
+  if (kind) return `fusion_report.${kind}`;
+  const last = segments[segments.length - 1] ?? "";
+  if (/\.[A-Za-z0-9]{2,5}$/.test(last)) return last;
+  const previous = segments[segments.length - 2] ?? "";
+  if (/\.[A-Za-z0-9]{2,5}$/.test(previous)) return previous;
+  return last || "download";
+}
+
+/**
+ * Fetch a generated artefact with the ownership token and save it via a blob
+ * link. Plain anchors cannot carry the header, so downloads use this helper.
+ * The server's Content-Disposition filename wins; `fallbackName` is used only
+ * when that header is unavailable.
+ */
+export async function downloadFile(path: string, fallbackName?: string): Promise<void> {
+  const response = await fetch(apiUrl(path), {
+    credentials: "include",
+    headers: { "X-DF-Owner": ownerToken() },
+  });
+  if (!response.ok) {
+    const contentType = response.headers.get("content-type") ?? "";
+    const payload = contentType.includes("application/json")
+      ? await response.json()
+      : await response.text();
+    throw payloadError(response.status, payload);
+  }
+  const resolved =
+    filenameFromContentDisposition(response.headers.get("content-disposition")) ??
+    (fallbackName ? sanitiseFilename(fallbackName) : null) ??
+    filenameFromPath(path);
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = resolved;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  // Revoking immediately can cancel the transfer in some browsers, so hold the
+  // blob URL briefly before releasing it.
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 function jsonBody(value: unknown): RequestInit {
@@ -226,4 +367,6 @@ export const api = {
 
   aiHistory: (limit = 25) =>
     request<{ records: AIUsageRecord[] }>(`/api/ai/history?limit=${limit}`),
+
+  download: (path: string, filename?: string) => downloadFile(path, filename),
 };

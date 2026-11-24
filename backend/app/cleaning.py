@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .utils import json_safe
+from .utils import json_safe, snake_case
 
 NUMERIC_HINT = re.compile(
     r"(age|qty|quantity|price|amount|score|count|pages|duration|rate|total|cost|revenue|"
@@ -21,7 +21,22 @@ CATEGORICAL_HINT = re.compile(
     r"gender|type|method|converted|class|label|outcome)",
     re.I,
 )
-ID_HINT = re.compile(r"(^|_)(id|uuid|key|code|number|no)$", re.I)
+# Identifier detection works on snake_case tokens. Names are split on
+# camelCase boundaries first, so "CustomerID" -> customer_id and "UUID" ->
+# uuid are recognised even after ingest normalisation.
+STRONG_ID_TOKENS = {"id", "uuid", "guid", "key", "code", "email", "phone", "mobile"}
+TRAILING_ID_TOKENS = {
+    "id", "uuid", "guid", "key", "code", "ref", "reference", "number", "no",
+    "name", "sku", "isbn", "email", "phone", "mobile",
+}
+COMPACT_ID_SUFFIXES = ("id", "uuid", "guid", "key", "code", "ref", "number")
+# Ordinary words that merely end in an identifier-like suffix; imputing these
+# is correct, so they must not be caught by the compact-name fallback.
+NOT_ID_WORDS = {
+    "paid", "valid", "void", "solid", "liquid", "rapid", "humid", "grid",
+    "bid", "kid", "acid", "mid", "avoid", "dividend", "monkey", "donkey",
+    "turkey", "whiskey", "hockey", "jockey", "weekend",
+}
 DATE_TOKEN = re.compile(
     r"(?:\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4})|(?::)|(?:\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b)",
     re.I,
@@ -39,7 +54,22 @@ def _snapshot(frame: pd.DataFrame) -> dict[str, Any]:
 
 
 def _key_like(name: str) -> bool:
-    return bool(ID_HINT.search(name))
+    """True when a column holds identifiers that must never be imputed."""
+    normalized = snake_case(name)
+    compact = normalized.replace("_", "")
+    if compact in NOT_ID_WORDS:
+        return False
+    tokens = [token for token in normalized.split("_") if token]
+    if any(token in STRONG_ID_TOKENS for token in tokens):
+        return True
+    if tokens and tokens[-1] in TRAILING_ID_TOKENS:
+        return True
+    # Columns normalised before camel-splitting existed arrive collapsed
+    # ("customerid"); their suffix still identifies them.
+    return any(
+        compact.endswith(suffix) and len(compact) > len(suffix)
+        for suffix in COMPACT_ID_SUFFIXES
+    )
 
 
 def _text_columns(frame: pd.DataFrame) -> list[str]:
@@ -71,10 +101,19 @@ def _looks_like_dates(series: pd.Series) -> bool:
     return bool(hits >= 0.6)
 
 
-def clean_frame(frame: pd.DataFrame, source_name: str) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Clean one source and return it with a fully traceable report."""
+def clean_frame(
+    frame: pd.DataFrame,
+    source_name: str,
+    protect_columns: set[str] | list[str] | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Clean one source and return it with a fully traceable report.
+
+    ``protect_columns`` lists columns whose blanks must be preserved; the
+    pipeline passes the model target so cleaning never invents labels.
+    """
     frame = frame.copy()
     frame.columns = [str(c) for c in frame.columns]
+    protected = {str(column) for column in (protect_columns or ())}
 
     report: dict[str, Any] = {
         "source": source_name,
@@ -89,6 +128,7 @@ def clean_frame(frame: pd.DataFrame, source_name: str) -> tuple[pd.DataFrame, di
         "outliers": [],
         "constant_columns": [],
         "duplicates_removed": 0,
+        "protected_columns": sorted(column for column in protected if column in frame.columns),
         "notes": [],
     }
 
@@ -173,15 +213,31 @@ def clean_frame(frame: pd.DataFrame, source_name: str) -> tuple[pd.DataFrame, di
             )
             frame[col] = normalized
 
+    # Genuine duplicates are decided before any value is filled. Two records
+    # that differ only by a blank cell are distinct rows, and must not collapse
+    # into one merely because imputation gave the blank a plausible value.
+    duplicate_mask = frame.duplicated(keep="first")
+    duplicates_detected = int(duplicate_mask.sum())
+
     # Missing values, with the method recorded for every column.
     for col in frame.columns:
         missing = int(frame[col].isna().sum())
         if not missing:
             continue
         series = frame[col]
-        identifier_like = _key_like(str(col)) or bool(
-            re.search(r"(email|phone|mobile|name)$", str(col), re.I)
-        )
+        if str(col) in protected:
+            # Never invent a label: rows without a target are excluded from
+            # training instead of being trained on a fabricated value.
+            report["missing"].append(
+                {
+                    "column": str(col),
+                    "before": missing,
+                    "after": missing,
+                    "method": "left blank (model target — never imputed)",
+                }
+            )
+            continue
+        identifier_like = _key_like(str(col))
         # Identifiers are never imputed, even when stored as numbers: a median
         # key would fabricate rows that later join to the wrong record.
         if identifier_like:
@@ -250,11 +306,11 @@ def clean_frame(frame: pd.DataFrame, source_name: str) -> tuple[pd.DataFrame, di
                 }
             )
 
-    # Exact duplicate rows.
-    duplicates = int(frame.duplicated().sum())
-    if duplicates:
-        frame = frame.drop_duplicates(keep="first").reset_index(drop=True)
-    report["duplicates_removed"] = duplicates
+    # Remove exactly the rows detected as duplicates before imputation.
+    if duplicates_detected:
+        keep = ~duplicate_mask.reindex(frame.index, fill_value=False)
+        frame = frame.loc[keep].reset_index(drop=True)
+    report["duplicates_removed"] = duplicates_detected
     report["after"] = _snapshot(frame)
     report["rows_removed"] = report["before"]["rows"] - report["after"]["rows"]
     report["missing_filled"] = int(

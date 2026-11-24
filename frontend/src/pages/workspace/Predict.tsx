@@ -264,7 +264,18 @@ export function PredictTab({
             {batching ? "Scoring rows…" : "Run batch"}
           </Button>
           {batch && (
-            <a href={apiUrl(batch.download)}>
+            <a
+              href={apiUrl(batch.download)}
+              onClick={(event) => {
+                event.preventDefault();
+                void api.download(batch.download, "predictions.csv").catch((caught) => {
+                  toast.show(
+                    caught instanceof ApiError ? caught.message : "Could not download the predictions.",
+                    "error",
+                  );
+                });
+              }}
+            >
               <Button size="sm" variant="subtle">
                 Download predictions CSV
               </Button>

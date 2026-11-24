@@ -1,7 +1,7 @@
 import { FileDown, FileSpreadsheet, FileText, Sparkles, Table2, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { Badge, Button, ErrorPanel, StepHeader } from "../../components/ui";
-import { ApiError, api, apiUrl } from "../../lib/api";
+import { ApiError, REPORT_FILENAMES, api, apiUrl } from "../../lib/api";
 import { fmtDateTime, fmtInt } from "../../lib/format";
 import { useToast } from "../../lib/toast";
 import type { Session } from "../../lib/types";
@@ -136,6 +136,15 @@ export function ReportsTab({
                       <a
                         key={artefact.key}
                         href={apiUrl(report.downloads[artefact.key])}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          void api
+                            .download(
+                              report.downloads[artefact.key],
+                              REPORT_FILENAMES[artefact.key],
+                            )
+                            .catch(() => undefined);
+                        }}
                         className="inline-flex h-8 items-center gap-1.5 rounded-full border border-line px-3 text-[10.5px] text-ink transition hover:border-accent/60 hover:text-accent"
                       >
                         <Icon size={12} /> {artefact.label}

@@ -8,6 +8,9 @@ __pycache__/
 # Runtime sessions, jobs, models and reports
 backend/data/
 
+# Local pre-fix backup copy (contains real session data and pickles)
+backend_backup/
+
 # Node
 frontend/node_modules/
 frontend/dist/

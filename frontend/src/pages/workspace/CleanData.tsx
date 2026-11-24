@@ -116,7 +116,15 @@ export function CleanDataTab({ sessionId }: { sessionId: string }) {
                 </p>
               </div>
               {download && (
-                <a href={apiUrl(download)}>
+                <a
+                  href={apiUrl(download)}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    void api
+                      .download(download, `${report.source}_cleaned.csv`)
+                      .catch(() => undefined);
+                  }}
+                >
                   <Button size="sm" variant="secondary" icon={<ArrowDownToLine size={13} />}>
                     Cleaned CSV
                   </Button>

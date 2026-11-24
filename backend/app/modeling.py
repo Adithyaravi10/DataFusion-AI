@@ -148,8 +148,11 @@ def train_models(
         raise ModelingError(
             f"Only {len(frame)} fused rows are available; at least 12 are needed to train and validate models."
         )
+    original_rows = int(len(frame))
     working = frame.copy()
     working = working[working[target].notna()]
+    dropped_missing_target = original_rows - int(len(working))
+    dropped_unparseable_target = 0
     if len(working) < 12:
         raise ModelingError(
             f"Only {len(working)} rows have a value for '{target}'; at least 12 labelled rows are required."
@@ -171,8 +174,10 @@ def train_models(
                 f"'{target}' has a class with a single row; at least 2 rows per class are needed."
             )
     else:
+        before_coercion = int(len(working))
         working[target] = pd.to_numeric(working[target], errors="coerce")
         working = working[working[target].notna()]
+        dropped_unparseable_target = before_coercion - int(len(working))
         if len(working) < 12:
             raise ModelingError(
                 f"'{target}' cannot be used for regression: fewer than 12 numeric values remain. "
@@ -182,6 +187,16 @@ def train_models(
             raise ModelingError(f"'{target}' has only one distinct numeric value, so a regression model cannot be trained.")
 
     notes: list[str] = []
+    if dropped_missing_target:
+        notes.append(
+            f"{dropped_missing_target:,} row(s) without a value for '{target}' were excluded "
+            "from training rather than trained on an imputed label."
+        )
+    total_dropped = dropped_missing_target + dropped_unparseable_target
+    if total_dropped:
+        notes.append(
+            f"Training used {len(working):,} of {original_rows:,} fused rows with an observed target."
+        )
     if len(working) > MAX_TRAIN_ROWS:
         working = working.sample(n=MAX_TRAIN_ROWS, random_state=RANDOM_STATE).sort_index()
         notes.append(
@@ -321,6 +336,10 @@ def train_models(
         "n_test": int(len(X_test)),
         "test_size": test_size,
         "cv_folds": n_splits,
+        "rows_available": original_rows,
+        "rows_used": int(len(working)),
+        "dropped_missing_target": dropped_missing_target,
+        "dropped_unparseable_target": dropped_unparseable_target,
         "features": features,
         "metrics_table": rows,
         "best_model": best_row["model"],
@@ -388,16 +407,71 @@ def predict_schema(frame: pd.DataFrame, target: str | None) -> list[dict[str, An
     return schema
 
 
-def predict_rows(bundle: dict[str, Any], records: list[dict[str, Any]]) -> dict[str, Any]:
+def _prediction_frame(
+    bundle: dict[str, Any],
+    records: list[dict[str, Any]],
+    strict_keys: bool,
+) -> pd.DataFrame:
+    """Validate user-supplied values and build the feature frame.
+
+    ``strict_keys`` is used for single-record predictions: every schema field
+    must be supplied, numbers must parse, and unknown field names are
+    rejected. Batch prediction keeps extra columns (they are carried into the
+    download) but still refuses values that cannot be used.
+    """
+    features = [str(feature) for feature in bundle["features"]]
+    numeric = set(bundle.get("numeric_features", []))
+    problems: list[str] = []
+    rows: list[dict[str, Any]] = []
+
+    if strict_keys:
+        unknown = sorted(set(records[0]) - set(features))
+        if unknown:
+            problems.append("unknown feature name(s): " + ", ".join(unknown[:6]))
+
+    for index, record in enumerate(records):
+        row: dict[str, Any] = {}
+        for feature in features:
+            if feature not in record:
+                if strict_keys:
+                    problems.append(f"missing feature '{feature}'")
+                row[feature] = np.nan
+                continue
+            value = record[feature]
+            if isinstance(value, str):
+                value = value.strip()
+            if feature in numeric:
+                if value is None or value == "" or (isinstance(value, float) and value != value):
+                    if strict_keys:
+                        problems.append(f"'{feature}' must be a number")
+                    row[feature] = np.nan
+                    continue
+                try:
+                    row[feature] = float(value)
+                except (TypeError, ValueError):
+                    problems.append(f"'{feature}' is not a number ({value!r})")
+                    row[feature] = np.nan
+            else:
+                row[feature] = np.nan if value is None or value == "" else value
+        rows.append(row)
+
+    if problems:
+        unique = list(dict.fromkeys(problems))
+        shown = "; ".join(unique[:6])
+        more = f" (and {len(unique) - 6} more)" if len(unique) > 6 else ""
+        raise ModelingError(f"Invalid prediction input — {shown}{more}.")
+    return pd.DataFrame(rows, columns=features)
+
+
+def predict_rows(
+    bundle: dict[str, Any],
+    records: list[dict[str, Any]],
+    strict_keys: bool = False,
+) -> dict[str, Any]:
     if not records:
         raise ModelingError("No input rows were supplied.")
-    features = bundle["features"]
-    numeric = set(bundle.get("numeric_features", []))
-    frame = pd.DataFrame([{feature: record.get(feature) for feature in features} for record in records])
-    for feature in features:
-        frame[feature] = frame[feature].replace({"": np.nan, None: np.nan})
-        if feature in numeric:
-            frame[feature] = pd.to_numeric(frame[feature], errors="coerce")
+    frame = _prediction_frame(bundle, records, strict_keys)
+    features = [str(feature) for feature in bundle["features"]]
     pipeline: Pipeline = bundle["pipeline"]
     predictions = pipeline.predict(frame)
     probabilities: list[dict[str, float] | None] = [None] * len(records)

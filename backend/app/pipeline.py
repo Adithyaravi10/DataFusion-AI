@@ -79,9 +79,29 @@ def run_pipeline(job: FusionJob, session_id: str, options: dict[str, Any]) -> No
         job.start("cleaning")
         cleaned: dict[str, pd.DataFrame] = {}
         clean_reports: list[dict[str, Any]] = []
+        # The model target keeps its blanks: imputing a label would train the
+        # model on values that were never observed.
+        protected_columns: set[str] = set()
+        all_columns = {str(column) for frame in raw_frames.values() for column in frame.columns}
+        if requested_target and str(requested_target) in all_columns:
+            protected_columns.add(str(requested_target))
+        sample_frame = pd.concat(
+            [frame.head(200) for frame in raw_frames.values()], ignore_index=True
+        )
+        suggested = analysis.suggest_target(sample_frame)
+        if suggested and suggested.get("column"):
+            protected_columns.add(str(suggested["column"]))
+        if protected_columns:
+            job.log(
+                "cleaning",
+                f"Preserving missing values in {', '.join(sorted(protected_columns))} "
+                "(model target — never imputed).",
+            )
         for file_info in meta["files"]:
             source = file_info["source"]
-            frame, report = cleaning.clean_frame(raw_frames[source], file_info["name"])
+            frame, report = cleaning.clean_frame(
+                raw_frames[source], file_info["name"], protect_columns=protected_columns
+            )
             cleaned[source] = frame
             clean_reports.append(report)
             frame.to_pickle(folder / "processed" / f"{source}_clean.pkl")
@@ -256,6 +276,7 @@ def run_pipeline(job: FusionJob, session_id: str, options: dict[str, Any]) -> No
         stats = {
             **stats,
             "remaining_missing": missing_cells,
+            "protected_columns": sorted(protected_columns),
             "target_suggestion": target_info,
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "source_files": [f["name"] for f in meta["files"]],

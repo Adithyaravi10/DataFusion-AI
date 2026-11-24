@@ -54,7 +54,7 @@ def _detect_separator(raw: bytes) -> str:
         return ","
 
 
-def _read_csv_bytes(raw: bytes, sep: str | None) -> pd.DataFrame:
+def _read_csv_bytes(raw: bytes, sep: str | None, row_limit: int | None = None) -> pd.DataFrame:
     last_error: Exception | None = None
     for encoding in ("utf-8-sig", "utf-8", "latin-1"):
         try:
@@ -66,6 +66,7 @@ def _read_csv_bytes(raw: bytes, sep: str | None) -> pd.DataFrame:
                 engine="python",
                 skip_blank_lines=True,
                 on_bad_lines="skip",
+                nrows=row_limit,
             )
         except Exception as exc:  # noqa: BLE001 - try the next encoding
             last_error = exc
@@ -96,13 +97,16 @@ def _read_json_bytes(raw: bytes) -> pd.DataFrame:
     raise IngestError("JSON must contain an array of objects or an object with an array of records.")
 
 
-def read_frame_bytes(raw: bytes, filename: str) -> pd.DataFrame:
+def read_frame_bytes(raw: bytes, filename: str, row_limit: int | None = None) -> pd.DataFrame:
+    """Parse an uploaded file. ``row_limit`` stops parsing early when only a
+    bounded preview is needed (batch prediction), so oversized files are never
+    fully materialised just to be rejected."""
     ext = extension_of(filename)
     try:
         if ext == ".csv":
-            frame = _read_csv_bytes(raw, None)
+            frame = _read_csv_bytes(raw, None, row_limit)
         elif ext == ".tsv":
-            frame = _read_csv_bytes(raw, "\t")
+            frame = _read_csv_bytes(raw, "\t", row_limit)
         elif ext in (".xlsx", ".xls"):
             frame = pd.read_excel(io.BytesIO(raw))
         elif ext == ".json":

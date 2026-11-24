@@ -237,8 +237,10 @@ Checklist before exposing the app:
 
 - Set `CORS_ORIGINS` to the real origin(s); the development default only allows `localhost`/`127.0.0.1`.
 - Serve behind TLS (reverse proxy) and keep `backend/.env` out of version control (already ignored).
-- `backend/data/` holds every session, model and report on local disk: mount a persistent volume, back it up, and run a single worker/replica. There is no database or object store.
-- **There is no authentication.** Anyone who can reach the API can read, delete and train on every session. Put it behind an authenticating proxy or private network; do not expose it publicly as-is.
+- Artefacts live in `DATA_DIR` (default `backend/data/`): sessions, uploads, models, predictions and reports. Point it at a mounted volume, back that volume up, and run a single worker/replica; there is no database or object store.
+- **Railway persistence:** add a volume to the service (mount path e.g. `/data`), set `DATA_DIR=/data`, then redeploy. Without a volume the container filesystem resets on every deploy or restart and sessions disappear.
+- **Session ownership:** each browser generates an unpredictable token (sent as the `X-DF-Owner` header and mirrored into an HttpOnly `df_owner` cookie). Sessions are bound to the token hash; another browser gets `404` for them.
+- **Pre-ownership sessions** have no owner, are hidden from every history and cannot be opened by anyone. To hand them to a browser, run `cd backend && python scripts/claim_legacy_sessions.py --list`, then re-run with `--token <df-owner value> --apply`. Nothing is adopted automatically and no files are deleted.
 - Health probe: `GET /api/health`. API docs: `/docs`.
 
 ## Design system

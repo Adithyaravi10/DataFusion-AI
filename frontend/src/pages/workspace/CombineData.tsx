@@ -100,7 +100,13 @@ export function CombineDataTab({ sessionId }: { sessionId: string }) {
           </>
         }
         actions={
-          <a href={apiUrl(data.download)}>
+          <a
+            href={apiUrl(data.download)}
+            onClick={(event) => {
+              event.preventDefault();
+              void api.download(data.download, "fused_dataset.csv").catch(() => undefined);
+            }}
+          >
             <Button size="sm" variant="secondary" icon={<ArrowDownToLine size={13} />}>
               Download fused CSV
             </Button>

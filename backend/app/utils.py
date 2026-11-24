@@ -44,7 +44,12 @@ def json_safe(value: Any) -> Any:
 
 
 def snake_case(name: Any) -> str:
-    text = re.sub(r"[^0-9a-zA-Z]+", "_", str(name).strip()).strip("_").lower()
+    text = str(name).strip()
+    # Split camelCase / PascalCase and acronym groups so "CustomerID" and
+    # "HTTPStatus" keep their word boundaries instead of collapsing to one
+    # token (which would hide identifiers such as ..._id from cleaning).
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", "_", text)
+    text = re.sub(r"[^0-9a-zA-Z]+", "_", text).strip("_").lower()
     return text or "column"
 
 

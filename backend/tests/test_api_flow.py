@@ -65,6 +65,10 @@ def test_full_session_flow(client, fused):
     assert batch.status_code == 200, batch.text
     assert batch.json()["total"] == 1
 
+    predictions_csv = client.get(batch.json()["download"])
+    assert predictions_csv.status_code == 200
+    assert "predictions.csv" in predictions_csv.headers.get("content-disposition", "")
+
     report = client.post("/api/report", json={"session_id": session_id})
     assert report.status_code == 200, report.text
     downloads = report.json()["downloads"]

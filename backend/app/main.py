@@ -4,15 +4,17 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
+import secrets
 import shutil
 import threading
 from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,13 +30,22 @@ from .store import (
     list_all_reports,
     list_sessions,
     latest_job_for_session,
+    load_job,
     load_meta,
     save_meta,
     session_dir,
+    storage_status,
     now_iso,
 )
 
 ensure_dirs()
+
+if os.getenv("RAILWAY_ENVIRONMENT") and not os.getenv("DATA_DIR", "").strip():
+    logging.getLogger("datafusion").warning(
+        "DATA_DIR is not set on Railway: the filesystem is ephemeral, so sessions, "
+        "models and reports will be deleted on the next deploy or restart. Attach a "
+        "volume and set DATA_DIR to its mount path (for example /data)."
+    )
 
 app = FastAPI(title="DataFusion AI API", version="1.0.0")
 
@@ -52,7 +63,54 @@ app.add_middleware(
     allow_credentials=not _allow_all_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Downloads keep the server-provided filename; cross-origin JavaScript can
+    # only read that header when it is explicitly exposed.
+    expose_headers=["Content-Disposition"],
 )
+
+# ------------------------------------------------ per-browser ownership
+# Sessions belong to the browser that created them. The browser supplies an
+# unpredictable token (header, mirrored into an HttpOnly cookie) and only its
+# hash is stored with the session, so one visitor cannot read another's data.
+OWNER_COOKIE = "df_owner"
+OWNER_HEADER = "x-df-owner"
+OWNER_COOKIE_MAX_AGE = 180 * 24 * 3600
+_OWNER_TOKEN = re.compile(r"^[A-Za-z0-9_-]{20,128}$")
+
+
+def _owner_digest(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+@app.middleware("http")
+async def attach_owner(request: Request, call_next):
+    """Resolve (or mint) the caller's ownership token for every request."""
+    token = (request.cookies.get(OWNER_COOKIE) or request.headers.get(OWNER_HEADER) or "").strip()
+    issued = False
+    if not _OWNER_TOKEN.fullmatch(token):
+        token = secrets.token_urlsafe(32)
+        issued = True
+    request.state.owner = _owner_digest(token)
+    response = await call_next(request)
+    if request.method != "OPTIONS" and (issued or request.cookies.get(OWNER_COOKIE) != token):
+        # The frontend may call the API from another origin (Vercel -> Railway),
+        # so a cross-site cookie must be SameSite=None and Secure.
+        secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").startswith("https")
+        response.set_cookie(
+            OWNER_COOKIE,
+            token,
+            max_age=OWNER_COOKIE_MAX_AGE,
+            httponly=True,
+            samesite="none" if secure else "lax",
+            secure=secure,
+            path="/",
+        )
+    return response
+
+
+def _owner(request: Request) -> str:
+    return getattr(request.state, "owner", "")
+
 
 # Built SPA (frontend/dist). When present the API also serves the app, so one
 # process can host the whole product behind a reverse proxy.
@@ -249,6 +307,24 @@ def _report_urls(session_id: str, report: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _imputed_target_note(meta: dict[str, Any], target: str) -> str | None:
+    """Warn when the chosen target had blanks filled during cleaning."""
+    for report in meta.get("clean") or []:
+        for entry in report.get("missing") or []:
+            if entry.get("column") != target:
+                continue
+            method = str(entry.get("method", ""))
+            if method.startswith("left blank"):
+                continue
+            if int(entry.get("before", 0) or 0) and not int(entry.get("after", 0) or 0):
+                return (
+                    f"'{target}' had {entry['before']} missing label(s) filled during cleaning "
+                    f"({method}) before this target was chosen; those rows were not observed. "
+                    "Re-run fusion with this target selected to exclude them."
+                )
+    return None
+
+
 def _target_info(meta: dict[str, Any]) -> dict[str, Any] | None:
     model = meta.get("model")
     if model and model.get("target"):
@@ -298,13 +374,41 @@ def _session_public(meta: dict[str, Any], include_files: bool = True) -> dict[st
     return analysis.json_safe(payload)
 
 
-def _load_session(session_id: str) -> dict[str, Any]:
+def _assert_owner(meta: dict[str, Any], owner: str) -> dict[str, Any]:
+    """Reject foreign sessions with 404 (never reveal that they exist).
+
+    Sessions created before ownership existed have no ``owner`` field. They are
+    *not* adopted automatically: the first browser to ask would otherwise take
+    over someone else's data. An operator assigns them explicitly with
+    ``backend/scripts/claim_legacy_sessions.py``.
+    """
+    if not owner:
+        raise HTTPException(status_code=404, detail="Session not found. It may have been deleted.")
+    stored = meta.get("owner")
+    if stored is None or not secrets.compare_digest(str(stored), owner):
+        raise HTTPException(status_code=404, detail="Session not found. It may have been deleted.")
+    return meta
+
+
+def _load_session(session_id: str, owner: str = "") -> dict[str, Any]:
     if not _valid_id(session_id):
         raise HTTPException(status_code=404, detail="Session not found. It may have been deleted.")
     try:
-        return load_meta(session_id)
+        meta = load_meta(session_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found. It may have been deleted.") from exc
+    return _assert_owner(meta, owner)
+
+
+def _load_job(job_id: str, owner: str) -> dict[str, Any] | None:
+    """Load a fusion job only when the caller owns its session."""
+    if not _valid_id(job_id):
+        return None
+    stored = load_job(job_id)
+    if stored is None:
+        return None
+    _load_session(str(stored.get("session_id", "")), owner)
+    return stored
 
 
 def _load_fused(session_id: str) -> pd.DataFrame:
@@ -318,13 +422,18 @@ def _load_fused(session_id: str) -> pd.DataFrame:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "service": "DataFusion AI", "time": now_iso()}
+    return {
+        "status": "ok",
+        "service": "DataFusion AI",
+        "time": now_iso(),
+        "storage": storage_status(),
+    }
 
 
 @app.get("/api/history")
-def history() -> list[dict[str, Any]]:
+def history(owner: str = Depends(_owner)) -> list[dict[str, Any]]:
     items = []
-    for meta in list_sessions():
+    for meta in list_sessions(owner):
         fusion = meta.get("fusion") or {}
         model = meta.get("model") or {}
         items.append(
@@ -345,13 +454,13 @@ def history() -> list[dict[str, Any]]:
 
 
 @app.get("/api/session/{session_id}")
-def get_session(session_id: str) -> dict[str, Any]:
-    return _session_public(_load_session(session_id))
+def get_session(session_id: str, owner: str = Depends(_owner)) -> dict[str, Any]:
+    return _session_public(_load_session(session_id, owner))
 
 
 @app.delete("/api/history/{session_id}")
-def delete_history(session_id: str) -> dict[str, Any]:
-    _load_session(session_id)
+def delete_history(session_id: str, owner: str = Depends(_owner)) -> dict[str, Any]:
+    _load_session(session_id, owner)
     delete_session(session_id)
     return {"deleted": True, "session_id": session_id}
 
@@ -359,7 +468,9 @@ def delete_history(session_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------- upload
 
 @app.post("/api/upload")
-async def upload(files: list[UploadFile] = File(...)) -> dict[str, Any]:
+async def upload(
+    files: list[UploadFile] = File(...), owner: str = Depends(_owner)
+) -> dict[str, Any]:
     if not files:
         raise HTTPException(status_code=400, detail="Choose at least one file to upload.")
     if len(files) > MAX_SESSION_FILES:
@@ -372,7 +483,7 @@ async def upload(files: list[UploadFile] = File(...)) -> dict[str, Any]:
             detail={"message": "Some files were rejected. Nothing was uploaded.", "errors": errors},
         )
 
-    meta = create_session([], " + ".join(name for name, _, _ in validated))
+    meta = create_session([], " + ".join(name for name, _, _ in validated), owner=owner)
     try:
         file_entries = _store_files(meta, validated)
         meta["files"] = file_entries
@@ -395,9 +506,11 @@ async def upload(files: list[UploadFile] = File(...)) -> dict[str, Any]:
 
 
 @app.post("/api/session/{session_id}/files")
-async def add_files(session_id: str, files: list[UploadFile] = File(...)) -> dict[str, Any]:
+async def add_files(
+    session_id: str, files: list[UploadFile] = File(...), owner: str = Depends(_owner)
+) -> dict[str, Any]:
     """Add more sources to an existing session without dropping the earlier ones."""
-    meta = _load_session(session_id)
+    meta = _load_session(session_id, owner)
     if not files:
         raise HTTPException(status_code=400, detail="Choose at least one file to add.")
     if meta.get("status") == "fusing":
@@ -464,8 +577,10 @@ async def add_files(session_id: str, files: list[UploadFile] = File(...)) -> dic
 
 
 @app.get("/api/files/{session_id}/preview")
-def file_preview(session_id: str, file_id: str = Query(...)) -> dict[str, Any]:
-    meta = _load_session(session_id)
+def file_preview(
+    session_id: str, file_id: str = Query(...), owner: str = Depends(_owner)
+) -> dict[str, Any]:
+    meta = _load_session(session_id, owner)
     file_info = next((f for f in meta["files"] if f["id"] == file_id), None)
     if not file_info:
         raise HTTPException(status_code=404, detail="That file is not part of this session.")
@@ -479,8 +594,8 @@ def file_preview(session_id: str, file_id: str = Query(...)) -> dict[str, Any]:
 
 
 @app.delete("/api/session/{session_id}/files/{file_id}")
-def remove_file(session_id: str, file_id: str) -> dict[str, Any]:
-    meta = _load_session(session_id)
+def remove_file(session_id: str, file_id: str, owner: str = Depends(_owner)) -> dict[str, Any]:
+    meta = _load_session(session_id, owner)
     file_info = next((f for f in meta["files"] if f["id"] == file_id), None)
     if not file_info:
         raise HTTPException(status_code=404, detail="That file is not part of this session.")
@@ -496,8 +611,8 @@ def remove_file(session_id: str, file_id: str) -> dict[str, Any]:
 # ----------------------------------------------------------------- fusion
 
 @app.post("/api/fuse")
-def start_fusion(payload: FuseRequest) -> dict[str, Any]:
-    meta = _load_session(payload.session_id)
+def start_fusion(payload: FuseRequest, owner: str = Depends(_owner)) -> dict[str, Any]:
+    meta = _load_session(payload.session_id, owner)
     if not meta.get("files"):
         raise HTTPException(status_code=400, detail="Upload at least one dataset before fusing.")
     existing = latest_job_for_session(meta["id"])
@@ -518,19 +633,20 @@ def start_fusion(payload: FuseRequest) -> dict[str, Any]:
 
 
 @app.get("/api/fuse/{job_id}/status")
-def job_status(job_id: str) -> dict[str, Any]:
+def job_status(job_id: str, owner: str = Depends(_owner)) -> dict[str, Any]:
     if not _valid_id(job_id):
         raise HTTPException(status_code=404, detail="Fusion job not found.")
     snapshot = jobs.snapshot(job_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Fusion job not found.")
+    _load_session(str(snapshot.get("session_id", "")), owner)
     snapshot["live"] = jobs.is_live(job_id)
     return analysis.json_safe(snapshot)
 
 
 @app.get("/api/fuse/{job_id}/stream")
-async def job_stream(job_id: str) -> StreamingResponse:
-    if not _valid_id(job_id):
+async def job_stream(job_id: str, owner: str = Depends(_owner)) -> StreamingResponse:
+    if _load_job(job_id, owner) is None:
         raise HTTPException(status_code=404, detail="Fusion job not found.")
     if jobs.snapshot(job_id) is None:
         raise HTTPException(status_code=404, detail="Fusion job not found.")
@@ -555,8 +671,10 @@ async def job_stream(job_id: str) -> StreamingResponse:
 
 
 @app.post("/api/fuse/{job_id}/confirm")
-def confirm_keys(job_id: str, payload: ConfirmRequest) -> dict[str, Any]:
-    if not _valid_id(job_id):
+def confirm_keys(
+    job_id: str, payload: ConfirmRequest, owner: str = Depends(_owner)
+) -> dict[str, Any]:
+    if _load_job(job_id, owner) is None:
         raise HTTPException(status_code=404, detail="Fusion job not found.")
     if not jobs.is_live(job_id):
         raise HTTPException(status_code=409, detail="This job is no longer running. Start fusion again.")
@@ -572,8 +690,8 @@ def confirm_keys(job_id: str, payload: ConfirmRequest) -> dict[str, Any]:
 # --------------------------------------------------------------- workspace
 
 @app.get("/api/session/{session_id}/clean")
-def clean_data(session_id: str) -> dict[str, Any]:
-    meta = _load_session(session_id)
+def clean_data(session_id: str, owner: str = Depends(_owner)) -> dict[str, Any]:
+    meta = _load_session(session_id, owner)
     reports = meta.get("clean")
     if not reports:
         raise HTTPException(status_code=409, detail="Cleaning has not run yet. Finish fusion first.")
@@ -581,11 +699,13 @@ def clean_data(session_id: str) -> dict[str, Any]:
         {
             "session_id": session_id,
             "reports": reports,
+            # A cleaning report is keyed by the uploaded file name, not by the
+            # source stem, so the download URL must match on the same field.
             "downloads": {
                 report["source"]: f"/api/session/{session_id}/clean/{file_info['id']}/download"
                 for report in reports
                 for file_info in meta["files"]
-                if file_info["source"] == report["source"]
+                if file_info["name"] == report["source"]
             },
             "totals": {
                 "rows_before": sum(r["before"]["rows"] for r in reports),
@@ -601,8 +721,8 @@ def clean_data(session_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/session/{session_id}/clean/{file_id}/download")
-def download_clean(session_id: str, file_id: str) -> FileResponse:
-    meta = _load_session(session_id)
+def download_clean(session_id: str, file_id: str, owner: str = Depends(_owner)) -> FileResponse:
+    meta = _load_session(session_id, owner)
     file_info = next((f for f in meta["files"] if f["id"] == file_id), None)
     if not file_info:
         raise HTTPException(status_code=404, detail="Source file not found.")
@@ -620,8 +740,9 @@ def combine_data(
     search: str = "",
     sort: str | None = None,
     direction: str = Query("asc", pattern="^(asc|desc)$"),
+    owner: str = Depends(_owner),
 ) -> dict[str, Any]:
-    meta = _load_session(session_id)
+    meta = _load_session(session_id, owner)
     stats = meta.get("fusion")
     if not stats:
         raise HTTPException(status_code=409, detail="Fusion has not finished for this session.")
@@ -638,8 +759,8 @@ def combine_data(
 
 
 @app.get("/api/session/{session_id}/fused/download")
-def download_fused(session_id: str) -> FileResponse:
-    _load_session(session_id)
+def download_fused(session_id: str, owner: str = Depends(_owner)) -> FileResponse:
+    _load_session(session_id, owner)
     path = session_dir(session_id) / "processed" / "fused_dataset.csv"
     if not path.exists():
         raise HTTPException(status_code=409, detail="Fused dataset is not ready yet.")
@@ -647,8 +768,8 @@ def download_fused(session_id: str) -> FileResponse:
 
 
 @app.get("/api/session/{session_id}/analyse")
-def analyse_data(session_id: str) -> dict[str, Any]:
-    meta = _load_session(session_id)
+def analyse_data(session_id: str, owner: str = Depends(_owner)) -> dict[str, Any]:
+    meta = _load_session(session_id, owner)
     fused = _load_fused(session_id)
     target = _target_info(meta)
     result = analysis.analyse_frame(fused, target)
@@ -715,8 +836,8 @@ def _ai_context(meta: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
 
 
 @app.get("/api/session/{session_id}/ai-insights")
-def cached_ai_insights(session_id: str) -> dict[str, Any]:
-    meta = _load_session(session_id)
+def cached_ai_insights(session_id: str, owner: str = Depends(_owner)) -> dict[str, Any]:
+    meta = _load_session(session_id, owner)
     return analysis.json_safe({"insights": meta.get("ai_insights")})
 
 
@@ -724,8 +845,9 @@ def cached_ai_insights(session_id: str) -> dict[str, Any]:
 def generate_ai_insights(
     session_id: str,
     payload: AIInsightsRequest,
+    owner: str = Depends(_owner),
 ) -> dict[str, Any]:
-    meta = _load_session(session_id)
+    meta = _load_session(session_id, owner)
     fused = _load_fused(session_id)
     target = _target_info(meta)
 
@@ -790,8 +912,8 @@ def ai_provider_status() -> dict[str, Any]:
     return ai_service.get_provider_status()
 
 @app.get("/api/session/{session_id}/charts")
-def chart_data(session_id: str) -> dict[str, Any]:
-    meta = _load_session(session_id)
+def chart_data(session_id: str, owner: str = Depends(_owner)) -> dict[str, Any]:
+    meta = _load_session(session_id, owner)
     fused = _load_fused(session_id)
     target = _target_info(meta)
     return analysis.json_safe(analysis.build_charts(fused, target, meta.get("model")))
@@ -800,8 +922,8 @@ def chart_data(session_id: str) -> dict[str, Any]:
 # -------------------------------------------------------------------- ML
 
 @app.post("/api/train")
-def train(payload: TrainRequest) -> dict[str, Any]:
-    meta = _load_session(payload.session_id)
+def train(payload: TrainRequest, owner: str = Depends(_owner)) -> dict[str, Any]:
+    meta = _load_session(payload.session_id, owner)
     fused = _load_fused(payload.session_id)
     if payload.target not in fused.columns:
         raise HTTPException(status_code=400, detail=f"'{payload.target}' is not a column in the fused dataset.")
@@ -815,6 +937,9 @@ def train(payload: TrainRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=f"Training failed: {exc}") from exc
 
     evaluation = result["evaluation"]
+    note = _imputed_target_note(meta, payload.target)
+    if note:
+        evaluation.setdefault("notes", []).append(note)
     modeling.save_model(payload.session_id, result["bundle"], evaluation)
     model_meta = {
         "task": evaluation["task"],
@@ -840,21 +965,21 @@ def train(payload: TrainRequest) -> dict[str, Any]:
 
 
 @app.get("/api/session/{session_id}/model")
-def get_model(session_id: str) -> dict[str, Any]:
-    meta = _load_session(session_id)
+def get_model(session_id: str, owner: str = Depends(_owner)) -> dict[str, Any]:
+    meta = _load_session(session_id, owner)
     if not meta.get("model"):
         raise HTTPException(status_code=404, detail="No model has been trained for this session yet.")
     return analysis.json_safe({"model": meta["model"]})
 
 
 @app.post("/api/predict")
-def predict(payload: PredictRequest) -> dict[str, Any]:
-    meta = _load_session(payload.session_id)
+def predict(payload: PredictRequest, owner: str = Depends(_owner)) -> dict[str, Any]:
+    meta = _load_session(payload.session_id, owner)
     if not meta.get("model"):
         raise HTTPException(status_code=409, detail="Train a model before making predictions.")
     try:
         bundle = modeling.load_bundle(payload.session_id)
-        result = modeling.predict_rows(bundle, [payload.values])
+        result = modeling.predict_rows(bundle, [payload.values], strict_keys=True)
     except modeling.ModelingError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - prediction inputs are user supplied
@@ -863,18 +988,40 @@ def predict(payload: PredictRequest) -> dict[str, Any]:
 
 
 @app.post("/api/predict/batch")
-async def predict_batch(session_id: str = Query(...), file: UploadFile = File(...)) -> dict[str, Any]:
-    meta = _load_session(session_id)
+async def predict_batch(
+    session_id: str = Query(...), file: UploadFile = File(...), owner: str = Depends(_owner)
+) -> dict[str, Any]:
+    meta = _load_session(session_id, owner)
     if not meta.get("model"):
         raise HTTPException(status_code=409, detail="Train a model before making predictions.")
     filename = file.filename or "batch.csv"
     if Path(filename).suffix.lower() not in (".csv", ".tsv"):
         raise HTTPException(status_code=400, detail="Batch predictions accept a CSV or TSV file.")
+    declared = getattr(file, "size", None)
+    if isinstance(declared, int) and declared > ingest.MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The batch file is {declared / (1024 * 1024):.1f} MB — "
+                f"the limit is {ingest.MAX_BYTES // (1024 * 1024)} MB."
+            ),
+        )
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="The batch file is empty.")
+    if len(raw) > ingest.MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The batch file is {len(raw) / (1024 * 1024):.1f} MB — "
+                f"the limit is {ingest.MAX_BYTES // (1024 * 1024)} MB."
+            ),
+        )
+    batch_limit = 5000
     try:
-        frame = ingest.read_frame_bytes(raw, filename)
+        # Stop parsing one row past the limit instead of materialising a
+        # 25 MB CSV in full before rejecting it.
+        frame = ingest.read_frame_bytes(raw, filename, row_limit=batch_limit + 1)
         bundle = modeling.load_bundle(session_id)
         missing = [feature for feature in bundle["features"] if feature not in frame.columns]
         if missing:
@@ -882,12 +1029,16 @@ async def predict_batch(session_id: str = Query(...), file: UploadFile = File(..
                 status_code=400,
                 detail=f"The batch file is missing required feature column(s): {', '.join(missing)}",
             )
-        if len(frame) > 5000:
-            raise HTTPException(status_code=400, detail="Batch prediction is limited to 5,000 rows.")
+        if len(frame) > batch_limit:
+            raise HTTPException(
+                status_code=400, detail=f"Batch prediction is limited to {batch_limit:,} rows."
+            )
         records = frame.to_dict(orient="records")
         result = modeling.predict_rows(bundle, records)
     except HTTPException:
         raise
+    except modeling.ModelingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Batch prediction failed: {exc}") from exc
 
@@ -916,8 +1067,10 @@ async def predict_batch(session_id: str = Query(...), file: UploadFile = File(..
 
 
 @app.get("/api/session/{session_id}/predictions/{filename}/download")
-def download_predictions(session_id: str, filename: str) -> FileResponse:
-    _load_session(session_id)
+def download_predictions(
+    session_id: str, filename: str, owner: str = Depends(_owner)
+) -> FileResponse:
+    _load_session(session_id, owner)
     path = (session_dir(session_id) / "predictions" / Path(filename).name).resolve()
     allowed = (session_dir(session_id) / "predictions").resolve()
     if not str(path).startswith(str(allowed)) or not path.exists():
@@ -928,8 +1081,8 @@ def download_predictions(session_id: str, filename: str) -> FileResponse:
 # --------------------------------------------------------------- reports
 
 @app.post("/api/report")
-def create_report(payload: ReportRequest) -> dict[str, Any]:
-    meta = _load_session(payload.session_id)
+def create_report(payload: ReportRequest, owner: str = Depends(_owner)) -> dict[str, Any]:
+    meta = _load_session(payload.session_id, owner)
     try:
         report = reporting.generate_report(payload.session_id)
     except reporting.ReportError as exc:
@@ -940,9 +1093,9 @@ def create_report(payload: ReportRequest) -> dict[str, Any]:
 
 
 @app.get("/api/reports")
-def reports() -> list[dict[str, Any]]:
+def reports(owner: str = Depends(_owner)) -> list[dict[str, Any]]:
     items = []
-    for report in list_all_reports():
+    for report in list_all_reports(owner):
         items.append(
             {
                 **report,
@@ -953,8 +1106,13 @@ def reports() -> list[dict[str, Any]]:
 
 
 @app.get("/api/reports/{session_id}/{report_id}/download")
-def download_report(session_id: str, report_id: str, kind: str = Query("pdf", pattern="^(pdf|csv|xlsx)$")) -> FileResponse:
-    meta = _load_session(session_id)
+def download_report(
+    session_id: str,
+    report_id: str,
+    kind: str = Query("pdf", pattern="^(pdf|csv|xlsx)$"),
+    owner: str = Depends(_owner),
+) -> FileResponse:
+    meta = _load_session(session_id, owner)
     report = next((r for r in meta.get("reports", []) if r["id"] == report_id), None)
     if not report:
         raise HTTPException(status_code=404, detail="Report not found.")
