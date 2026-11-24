@@ -1,3 +1,8 @@
+// Wall-clock times are rendered in one fixed zone (IST) so the dashboard and
+// the processing logs agree with the backend and do not depend on the viewer's
+// device timezone.
+export const APP_TIME_ZONE = "Asia/Kolkata";
+
 export function fmtInt(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
   return new Intl.NumberFormat("en-US").format(value);
@@ -34,6 +39,7 @@ export function fmtDate(value: string | null | undefined): string {
     day: "numeric",
     month: "short",
     year: "numeric",
+    timeZone: APP_TIME_ZONE,
   }).format(date);
 }
 
@@ -47,6 +53,21 @@ export function fmtDateTime(value: string | null | undefined): string {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: APP_TIME_ZONE,
+  }).format(date);
+}
+
+/** HH:MM:SS in IST for processing-log lines; bare clock strings pass through. */
+export function fmtLogTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone: APP_TIME_ZONE,
   }).format(date);
 }
 

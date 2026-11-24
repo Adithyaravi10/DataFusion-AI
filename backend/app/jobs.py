@@ -5,7 +5,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Any
 
-from .store import load_job, new_id, now_iso, save_job
+from .store import load_job, local_timestamp, new_id, now_iso, save_job
 
 STAGE_DEFINITIONS = [
     ("reading", "Reading files"),
@@ -65,7 +65,9 @@ class FusionJob:
 
     def log(self, key: str, message: str) -> None:
         stage = self.stage(key)
-        stage["logs"].append({"at": datetime.now(timezone.utc).strftime("%H:%M:%S"), "message": message})
+        # Stamped at the moment the stage actually emits the line, in the
+        # display timezone, so the log shows real execution time and not UTC.
+        stage["logs"].append({**local_timestamp(), "message": message})
         self.save()
 
     def finish(self, key: str) -> None:
@@ -89,7 +91,7 @@ class FusionJob:
         stage = self.stage(key)
         stage["status"] = "error"
         stage["finished_at"] = now_iso()
-        stage["logs"].append({"at": datetime.now(timezone.utc).strftime("%H:%M:%S"), "message": message})
+        stage["logs"].append({**local_timestamp(), "message": message})
         self.state = "error"
         self.error = message
         self.needs = None

@@ -7,12 +7,14 @@ model, generated reports and a metadata JSON document.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -23,7 +25,39 @@ _lock = threading.RLock()
 
 
 def now_iso() -> str:
+    """Storage timestamp (UTC). Kept in UTC so ordering is unambiguous."""
     return datetime.now(timezone.utc).isoformat()
+
+
+# Human-facing times (dashboard activity and processing logs) are shown in one
+# fixed zone, whatever timezone the server or the browser happens to use.
+DISPLAY_TIMEZONE_NAME = os.getenv("APP_TIMEZONE", "").strip() or "Asia/Kolkata"
+
+
+def _resolve_timezone(name: str) -> tzinfo:
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        pass
+    if name in {"Asia/Kolkata", "Asia/Calcutta"}:
+        # Windows and slim containers can ship without the IANA database. IST
+        # has no daylight saving, so a fixed offset is exact.
+        return timezone(timedelta(hours=5, minutes=30), "IST")
+    return timezone.utc
+
+
+DISPLAY_TIMEZONE = _resolve_timezone(DISPLAY_TIMEZONE_NAME)
+
+
+def now_local() -> datetime:
+    """Current wall-clock time in the display timezone (IST by default)."""
+    return datetime.now(DISPLAY_TIMEZONE)
+
+
+def local_timestamp(moment: datetime | None = None) -> dict[str, str]:
+    """A log stamp in the display timezone: clock time plus a full ISO value."""
+    at = now_local() if moment is None else moment.astimezone(DISPLAY_TIMEZONE)
+    return {"at": at.strftime("%H:%M:%S"), "at_iso": at.isoformat(timespec="seconds")}
 
 
 def new_id() -> str:

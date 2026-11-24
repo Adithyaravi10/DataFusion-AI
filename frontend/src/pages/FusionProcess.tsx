@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Badge, Button, ErrorPanel, ProgressBar, SectionLabel } from "../components/ui";
 import { ApiError, api } from "../lib/api";
-import { fmtDuration, fmtInt, fmtNumber } from "../lib/format";
+import { fmtDuration, fmtInt, fmtLogTime, fmtNumber } from "../lib/format";
 import { useSession } from "../lib/session";
 import { useToast } from "../lib/toast";
 import type { JobStatus, Stage } from "../lib/types";
@@ -363,8 +363,13 @@ export function FusionProcess() {
               {logs.length > 0 && (
                 <div className="mt-3 space-y-1 border-t border-line/70 pt-3">
                   {logs.slice(-4).map((entry, logIndex) => (
-                    <div key={`${entry.at}-${logIndex}`} className="flex gap-3 font-mono text-[10.5px] leading-relaxed">
-                      <span className="text-muted/70">{entry.at}</span>
+                    <div
+                      key={`${entry.at_iso ?? entry.at}-${logIndex}`}
+                      className="flex gap-3 font-mono text-[10.5px] leading-relaxed"
+                    >
+                      <span className="text-muted/70">
+                        {entry.at_iso ? fmtLogTime(entry.at_iso) : entry.at}
+                      </span>
                       <span className="text-ink/75">{entry.message}</span>
                     </div>
                   ))}

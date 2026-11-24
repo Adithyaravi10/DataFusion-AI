@@ -181,7 +181,7 @@ export interface Stage {
   started_at: string | null;
   finished_at: string | null;
   duration_ms: number | null;
-  logs: { at: string; message: string }[];
+  logs: { at: string; at_iso?: string; message: string }[];
 }
 
 export interface JobStatus {
