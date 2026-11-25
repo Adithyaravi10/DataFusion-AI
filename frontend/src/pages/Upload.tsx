@@ -190,27 +190,50 @@ export function UploadPage() {
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  // The last session id this page created or read successfully.
+  const confirmed = useRef<string | null>(null);
 
   useEffect(() => {
     if (!sessionId) {
       setSession(null);
+      setRestoreError(null);
       return;
     }
     let cancelled = false;
     setLoadingExisting(true);
+    setRestoreError(null);
     api
       .session(sessionId)
       .then((value) => {
-        if (!cancelled) {
-          setSession(value);
-          setExpanded((current) => current ?? value.files[0]?.id ?? null);
-        }
+        if (cancelled) return;
+        setSession(value);
+        confirmed.current = value.id;
+        setExpanded((current) => current ?? value.files[0]?.id ?? null);
       })
-      .catch(() => {
-        if (!cancelled) {
-          saveSession(null);
-          setSession(null);
+      .catch((caught) => {
+        if (cancelled) return;
+        const gone = caught instanceof ApiError && caught.status === 404;
+        // Only a 404 means the session is genuinely unavailable. A network
+        // error or a 5xx must not throw away the reference to the user's data.
+        if (!gone) {
+          setRestoreError(
+            caught instanceof Error ? caught.message : "Could not restore this session from the API.",
+          );
+          return;
         }
+        if (confirmed.current === sessionId) {
+          // We just uploaded into this session, so the files exist; the API
+          // simply cannot read them back for this browser. Say so instead of
+          // silently showing zero files.
+          setRestoreError(
+            "The API did not recognise this browser's session token, so it could not reload the files you just uploaded. Reload once the frontend and API are on matching deployments.",
+          );
+          return;
+        }
+        saveSession(null);
+        setSession(null);
+        setRestoreError("That session is no longer available. Upload a file to start a new one.");
       })
       .finally(() => {
         if (!cancelled) setLoadingExisting(false);
@@ -263,6 +286,8 @@ export function UploadPage() {
         : await api.upload(accepted, onProgress);
       setSession(result.session);
       saveSession(result.session.id);
+      confirmed.current = result.session.id;
+      setRestoreError(null);
       setExpanded(result.files[0]?.id ?? null);
       toast.show(
         `${result.files.length} file${result.files.length === 1 ? "" : "s"} added · ${fmtInt(
@@ -323,8 +348,10 @@ export function UploadPage() {
     saveSession(null);
     setJob(null);
     setSession(null);
+    confirmed.current = null;
     setErrors([]);
     setGeneralError(null);
+    setRestoreError(null);
     setExpanded(null);
   };
 
@@ -363,6 +390,12 @@ export function UploadPage() {
       />
 
       {loadingExisting && <p className="pb-4 text-[12px] text-muted">Restoring your last session…</p>}
+
+      {restoreError && (
+        <div className="pb-4">
+          <ErrorPanel title="Session sync" message={restoreError} />
+        </div>
+      )}
 
       {ready && session && (
         <div className="mb-5 flex flex-col gap-3 rounded-card border border-success/30 bg-success/5 p-4 sm:flex-row sm:items-center sm:justify-between">
